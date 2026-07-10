@@ -11,21 +11,19 @@ env:
 jobs:
   build:
     name: fmt / clippy / test / build
-    runs-on: ubuntu-latest
+    # macOS so the apple-native Keychain backend compiles and is exercised on the
+    # platform this tool targets. Unit tests are pure logic and never touch the keychain.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: fmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: test
-        run: cargo test --all
-      - name: build
-        run: cargo build --release
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+      - run: cargo build --release
 
   security:
     name: audit / deny / secrets
