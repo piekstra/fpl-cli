@@ -161,23 +161,30 @@ pub fn outages(v: &Value, filter: Option<&str>) {
     println!("TOTAL OUT | {total_out}");
 }
 
-/// Balance read: pull common fields for the text block, else flatten.
+/// Balance read: a concise Balance / Due / Past-due block, else flatten.
 pub fn balance(v: &Value) {
-    let data = v.get("data").unwrap_or(v);
+    let d = v.get("data").unwrap_or(v);
+    let first = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .filter_map(|k| d.get(*k))
+            .find(|x| !x.is_null())
+            .map(scalar)
+    };
+
     let mut printed = false;
-    for (label, key) in [
-        ("Balance", "amount"),
-        ("Balance", "balance"),
-        ("Balance", "actualBalance"),
-        ("Due date", "dueDate"),
-        ("Due date", "dueDateVal"),
-        ("Past due", "pastDueAmount"),
-    ] {
-        if let Some(val) = data.get(key) {
-            if !val.is_null() {
-                println!("{label}: {}", scalar(val));
-                printed = true;
-            }
+    if let Some(bal) = first(&["balance", "actualBalance", "amount"]) {
+        println!("Balance:  {bal}");
+        printed = true;
+    }
+    if let Some(due) = first(&["dueDateVal", "dueDate", "balance_due_date"]) {
+        if !due.is_empty() {
+            println!("Due:      {due}");
+            printed = true;
+        }
+    }
+    if let Some(past) = first(&["pastDueAmount", "pastDueAmt"]) {
+        if !matches!(past.as_str(), "" | "0" | "0.0" | "$0.00") {
+            println!("Past due: {past}");
         }
     }
     if !printed {

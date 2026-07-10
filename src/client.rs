@@ -56,6 +56,29 @@ fn build_client() -> Result<reqwest::blocking::Client, AppError> {
         .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))
 }
 
+/// Pull a short human hint out of an error response body: a `message` /
+/// `messageCode` field if the body is JSON, else a trimmed snippet. Returns a
+/// leading `" — …"` (or empty) so it slots into an error message.
+fn body_hint(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        for key in ["message", "messageCode", "error", "errorMessage"] {
+            if let Some(m) = v.get(key).and_then(|x| x.as_str()) {
+                if !m.is_empty() {
+                    return format!(" — {m}");
+                }
+            }
+        }
+        if let Some(m) = v.pointer("/messages/0/message").and_then(|x| x.as_str()) {
+            return format!(" — {m}");
+        }
+    }
+    format!(" — {}", trimmed.chars().take(120).collect::<String>())
+}
+
 /// Turn a service path into a full URL. Accepts either an absolute URL or a
 /// leading-slash path relative to [`API_HOST`].
 fn url_for(path: &str) -> String {
@@ -103,7 +126,7 @@ impl Fpl {
                 _ => "FPL login failed (401).".to_string(),
             };
             return Err(AppError::Auth(format!(
-                "{msg} Re-run `fpl login` with the credentials you use at fpl.com."
+                "{msg} Re-run `fpl init` with the credentials you use at fpl.com."
             )));
         }
 
@@ -126,9 +149,12 @@ impl Fpl {
 
     fn handle(&self, resp: reqwest::blocking::Response, path: &str) -> Result<Value, AppError> {
         let status = resp.status();
+        // Read the body once; include a snippet in error messages so a 4xx from
+        // FPL explains itself instead of just showing a status code.
+        let text = resp.text().unwrap_or_default();
         if matches!(status.as_u16(), 401 | 403) {
             return Err(AppError::Auth(format!(
-                "FPL returned {} for {path} — session expired. Run `fpl login` again.",
+                "FPL returned {} for {path} — session expired. Run `fpl init` again.",
                 status.as_u16()
             )));
         }
@@ -137,13 +163,11 @@ impl Fpl {
         }
         if !status.is_success() {
             return Err(AppError::Network(format!(
-                "FPL HTTP {} for {path}",
-                status.as_u16()
+                "FPL HTTP {} for {path}{}",
+                status.as_u16(),
+                body_hint(&text)
             )));
         }
-        // Some endpoints (PDF download) are not JSON; callers that need bytes use
-        // `get_bytes`. Here we best-effort parse JSON and surface a clear error.
-        let text = resp.text()?;
         if text.trim().is_empty() {
             return Ok(Value::Null);
         }
@@ -198,25 +222,6 @@ impl Fpl {
                 "unsupported HTTP method {other:?} (use GET, POST, PUT, or DELETE)"
             ))),
         }
-    }
-
-    /// Fetch raw bytes (e.g. a bill PDF) from an authenticated endpoint.
-    pub fn get_bytes(&self, path: &str) -> Result<Vec<u8>, AppError> {
-        let resp = self.auth_headers(self.client.get(url_for(path))).send()?;
-        let status = resp.status();
-        if matches!(status.as_u16(), 401 | 403) {
-            return Err(AppError::Auth(format!(
-                "FPL returned {} for {path} — session expired. Run `fpl login` again.",
-                status.as_u16()
-            )));
-        }
-        if !status.is_success() {
-            return Err(AppError::Network(format!(
-                "FPL HTTP {} for {path}",
-                status.as_u16()
-            )));
-        }
-        Ok(resp.bytes()?.to_vec())
     }
 
     // ---- Account discovery -------------------------------------------------
@@ -325,10 +330,24 @@ impl Fpl {
 
     // ---- Billing -----------------------------------------------------------
 
+    /// Balance and due status for one account. The dedicated `/balance` endpoint
+    /// is finicky about pagination params, so we read the balance fields off the
+    /// `loginNew` account list, which returns a clean per-account summary.
     pub fn balance(&self, account: &str) -> Result<Value, AppError> {
-        self.get(&format!(
-            "/cs/customer/v1/accountservices/resources/account/{account}/balance"
-        ))
+        let list = self.account_list()?;
+        let rows = list
+            .pointer("/data/AccountList/data")
+            .and_then(|v| v.as_array());
+        if let Some(rows) = rows {
+            for a in rows {
+                if a.get("accountNumber").and_then(|v| v.as_str()) == Some(account) {
+                    return Ok(a.clone());
+                }
+            }
+        }
+        Err(AppError::NotFound(format!(
+            "no balance information for account {account}"
+        )))
     }
 
     pub fn bill_history(&self, account: &str) -> Result<Value, AppError> {
@@ -354,12 +373,6 @@ impl Fpl {
         ))
     }
 
-    pub fn download_bill(&self, account: &str) -> Result<Vec<u8>, AppError> {
-        self.get_bytes(&format!(
-            "/cs/customer/v1/documentretrieval/resources/account/{account}/download"
-        ))
-    }
-
     // ---- Payments ----------------------------------------------------------
 
     pub fn payment_options(&self, account: &str) -> Result<Value, AppError> {
@@ -379,19 +392,13 @@ impl Fpl {
 
     pub fn account_history(&self, account: &str) -> Result<Value, AppError> {
         self.get(&format!(
-            "/cs/customer/v1/accounthistory/resources/account/{account}/account-history"
+            "/cs/customer/v1/accounthistory/resources/account/{account}/account-history?count=25&start=1&sortBy=date"
         ))
     }
 
     pub fn deposit_history(&self, account: &str) -> Result<Value, AppError> {
         self.get(&format!(
-            "/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history"
-        ))
-    }
-
-    pub fn document_history(&self, account: &str) -> Result<Value, AppError> {
-        self.get(&format!(
-            "/cs/customer/v1/documentretrieval/resources/account/{account}/document-history"
+            "/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history?count=25&start=1&sortBy=date"
         ))
     }
 

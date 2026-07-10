@@ -5,7 +5,7 @@ use crate::commands::Ctx;
 use crate::error::AppError;
 use crate::output;
 
-const TYPES: [&str; 3] = ["account", "deposit", "document"];
+const TYPES: [&str; 2] = ["account", "deposit"];
 
 pub fn run(ctx: &Ctx, cmd: &HistoryCommand) -> Result<(), AppError> {
     match cmd {
@@ -21,7 +21,6 @@ pub fn run(ctx: &Ctx, cmd: &HistoryCommand) -> Result<(), AppError> {
             let v = match r#type.to_lowercase().as_str() {
                 "account" => fpl.account_history(&account)?,
                 "deposit" => fpl.deposit_history(&account)?,
-                "document" | "documents" => fpl.document_history(&account)?,
                 other => {
                     return Err(AppError::Usage(format!(
                         "unknown history type {other:?} — valid: {} (see `fpl history types`)",

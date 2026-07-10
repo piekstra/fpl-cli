@@ -26,15 +26,6 @@ pub fn run(ctx: &Ctx, cmd: &BillsCommand) -> Result<(), AppError> {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
             output::render(&fpl.budget_billing(&account)?);
         }
-        BillsCommand::Download { account_id, output } => {
-            let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            let bytes = fpl.download_bill(&account)?;
-            std::fs::write(output, &bytes)
-                .map_err(|e| AppError::Other(format!("writing {output}: {e}")))?;
-            if !ctx.cli.quiet {
-                eprintln!("wrote {} bytes to {output}", bytes.len());
-            }
-        }
     }
     Ok(())
 }

@@ -80,7 +80,6 @@ fpl bills get [account-id]        # this period: projected bill, bill-to-date, d
 fpl bills projected [account-id]  # projected end-of-cycle bill
 fpl bills list [account-id]       # prior bills (amounts, dates, usage)
 fpl bills budget [account-id]     # Budget Billing plan status + monthly graph
-fpl bills download [account-id] -o my-bill.pdf   # download the latest bill PDF
 ```
 
 ### Payments
@@ -109,7 +108,6 @@ fpl usage appliances [account-id]          # appliance-level (disaggregated) bre
 ```sh
 fpl history list [account-id]                 # account ledger (default --type account)
 fpl history list [account-id] --type deposit  # deposit history
-fpl history list [account-id] --type document # documents available to download
 fpl history types                             # valid --type values
 ```
 

@@ -71,7 +71,7 @@ pub enum Command {
     #[command(subcommand)]
     Usage(UsageCommand),
 
-    /// Account ledgers: transaction, deposit, and document history.
+    /// Account ledgers: transaction and deposit history.
     #[command(subcommand)]
     History(HistoryCommand),
 
@@ -184,14 +184,6 @@ pub enum BillsCommand {
         /// Account number (defaults to active / --account).
         account_id: Option<String>,
     },
-    /// Download your latest bill PDF.
-    Download {
-        /// Account number (defaults to active / --account).
-        account_id: Option<String>,
-        /// Output file path.
-        #[arg(short = 'o', long, default_value = "fpl-bill.pdf")]
-        output: String,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -256,7 +248,7 @@ pub enum HistoryCommand {
     List {
         /// Account number (defaults to active / --account).
         account_id: Option<String>,
-        /// Which ledger: account, deposit, or document.
+        /// Which ledger: account or deposit.
         #[arg(long, default_value = "account")]
         r#type: String,
     },

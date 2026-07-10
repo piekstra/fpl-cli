@@ -43,20 +43,31 @@ premise number from account detail.
 | `accounts list` | GET | `/cs/customer/v1/resources/account?sortBy=status&count=10&start=1` |
 | `accounts list` (fallback) | POST | `/cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS` |
 | `accounts get` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/select?view=account-lander` |
-| `accounts balance` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/balance` |
+| `accounts balance` | POST | `/cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS` (balance fields per account) |
 | `bills list` | GET | `/cs/customer/v1/sumbillaccount/resources/account/{account}/bill-history` |
 | `bills projected` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/projectedBill?premiseNumber={premise}&lastBilledDate={MMDDYYYY}` |
 | `bills budget` | GET | `/cs/customer/v1/budgetbillingapi/resources/account/{account}/budgetBillingGraph` |
-| `bills download` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/download` |
 | `bills get` / `usage get` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-energy-service` |
 | `usage hourly` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-hourly-usage` |
 | `usage appliances` | POST | `/cs/customer/v1/energyanalyzer/resources/{account}/getDisaggResp` |
 | `payments methods` | GET | `/cs/customer/v1/paymentservices/resources/account/{account}/payment-option` |
 | `payments create` | POST | `/cs/customer/v1/paymentservices/resources/account/{account}/payment` |
-| `payments list` / `history list --type account` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/account-history` |
-| `history list --type deposit` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history` |
-| `history list --type document` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/document-history` |
+| `payments list` / `history list --type account` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/account-history?count=25&start=1&sortBy=date` |
+| `history list --type deposit` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history?count=25&start=1&sortBy=date` |
 | `outages list` | GET | `https://www.fplmaps.com/customer/outage/CountyOutages.json` *(public, no auth)* |
+
+The `account-history` / `deposit-history` endpoints require the `count`, `start`,
+and `sortBy` query parameters together — omit any and they return `400`. The
+dedicated `/balance` endpoint has similar pagination requirements and is
+inconsistent, so `accounts balance` reads the per-account balance fields
+(`balance`, `actualBalance`, `dueDateVal`) off the `loginNew` list instead.
+**Document retrieval is not yet mapped.** Both document history
+(`/documentretrieval/…/document-history`, every path variant returns `404`) and
+the bill-PDF download (`/documentretrieval/…/download`, returns `555 "No file
+path available in DB"` for every `billDate` format) appear to need a document
+reference the web app derives elsewhere. Until that's mapped, there's no
+`history --type document` or `bills download`; `bills list` still gives every
+bill's amounts, dates, and usage as text.
 
 ### Request-body notes
 
