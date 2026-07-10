@@ -1,0 +1,19 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Secrets & personal data — passwords live in the OS keychain, never in-repo.
+.env
+.env.*
+*.local
+*.secret
+*.token
+
+# Local tooling session files (not part of the project)
+.twapp-*.json
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

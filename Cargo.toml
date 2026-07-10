@@ -1,0 +1,41 @@
+[package]
+name = "fpl-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Manage your Florida Power & Light account from the command line — Keychain-secured, agent-friendly. Work in progress."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/piekstra/fpl"
+homepage = "https://github.com/piekstra/fpl"
+readme = "README.md"
+keywords = ["fpl", "utility", "electric", "billing", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "fpl"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+rpassword = "7"
+zeroize = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "cookies", "rustls-tls"] }
+
+# Platform-native secret stores (macOS Keychain, Windows Credential Manager,
+# Linux Secret Service with pure-Rust crypto). Mirrors the baby-registry CLIs.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"
