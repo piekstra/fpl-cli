@@ -150,7 +150,7 @@ impl Fpl {
         serde_json::from_str(&text).map_err(|_| {
             AppError::Other(format!(
                 "FPL returned a non-JSON response for {path} (first bytes: {:?})",
-                &text.chars().take(60).collect::<String>()
+                text.chars().take(60).collect::<String>()
             ))
         })
     }
