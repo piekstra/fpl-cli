@@ -83,6 +83,19 @@ pub enum Command {
     ///
     /// Example: `fpl api GET /cs/customer/v1/resources/header`
     Api(ApiArgs),
+
+    /// Update `fpl` to the latest release from GitHub.
+    Update(UpdateArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Only report whether a newer version is available; don't install.
+    #[arg(long)]
+    pub check: bool,
+    /// Emit the result as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]

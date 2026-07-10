@@ -135,6 +135,17 @@ fpl api POST /cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS
 Paths are relative to `https://www.fpl.com` (or pass a full URL). Output is
 always JSON.
 
+### Updating
+
+```sh
+fpl update --check    # is a newer release available?
+fpl update            # download the latest release for your platform and replace the binary
+```
+
+`fpl update` pulls the matching `fpl-<target>.tar.gz` from this repo's GitHub
+Releases and swaps the running binary in place. (If you installed with
+`cargo install`, `git pull && make install` also works.)
+
 ## Output & scripting
 
 **Text is the default.** Resource reads render `Key: value` blocks and

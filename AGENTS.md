@@ -25,7 +25,9 @@ before touching `src/client.rs`.
 | `src/config.rs` | `~/.config/fpl-cli/config.json` (non-secret prefs) |
 | `src/output.rs` | text rendering + control-plane JSON |
 | `src/error.rs` | `AppError` + exit codes |
+| `src/commands/update.rs` | `fpl update`: self-update from GitHub Releases |
 | `src/dates.rs` | minimal date math (no calendar crate) |
+| `build.rs` | bakes the target triple into `FPL_TARGET` for `update` |
 
 ## Durable conventions (do not drift)
 

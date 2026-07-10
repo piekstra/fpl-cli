@@ -10,6 +10,7 @@ pub mod init;
 pub mod outages;
 pub mod payments;
 pub mod set_credential;
+pub mod update;
 pub mod usage;
 
 use std::io::{IsTerminal, Write};

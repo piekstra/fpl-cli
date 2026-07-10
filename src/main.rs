@@ -42,5 +42,6 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::History(cmd) => commands::history::run(&ctx, cmd),
         Command::Outages(cmd) => commands::outages::run(&ctx, cmd),
         Command::Api(args) => commands::api::run(&ctx, args),
+        Command::Update(args) => commands::update::run(&ctx, args),
     }
 }

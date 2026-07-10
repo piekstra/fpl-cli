@@ -23,6 +23,12 @@ anyhow = "1"
 rpassword = "7"
 zeroize = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "cookies", "rustls-tls"] }
+# Self-update from GitHub Releases: download a tar.gz asset and replace the
+# running binary. Hand-rolled over these small crates rather than a heavier
+# self-update crate (keeps the dependency/advisory surface minimal).
+flate2 = "1"
+tar = "0.4"
+self-replace = "1"
 
 # Platform-native secret stores (macOS Keychain, Windows Credential Manager,
 # Linux Secret Service with pure-Rust crypto). Mirrors the baby-registry CLIs.
