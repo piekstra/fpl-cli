@@ -1,11 +1,21 @@
-//! Output rendering. Every command supports `--json` (pretty JSON on stdout).
-//! Human output is a light, readable summary; where a response shape isn't
-//! pinned down we fall back to pretty JSON so nothing is silently dropped.
+//! Output rendering.
+//!
+//! **Text is the primary format.** Resource reads render token-dense
+//! `Key: value` blocks and pipe-delimited tables (`ALL_CAPS` headers). JSON is
+//! reserved for control-plane signals — `init` / `set-credential` results,
+//! `auth status`, and the raw `api` payload — never bolted onto resource reads.
+//! Data goes to stdout; diagnostics and confirmations go to stderr.
+//!
+//! Many FPL response shapes aren't pinned down yet, so [`render`] flattens
+//! whatever JSON comes back into readable text. As shapes are confirmed, add a
+//! purpose-built renderer next to the generic one. For the raw structure, use
+//! `fpl api`.
 
 use serde_json::Value;
 
 use crate::client::AccountSummary;
 
+/// Pretty JSON on stdout. Control-plane only.
 pub fn json(v: &Value) {
     println!(
         "{}",
@@ -13,41 +23,104 @@ pub fn json(v: &Value) {
     );
 }
 
-/// Generic fallback: pretty JSON in both modes. Used for endpoints whose exact
-/// human layout isn't verified yet.
-pub fn value(v: &Value, _json: bool) {
-    json(v);
+/// Default text renderer for a resource read. Unwraps FPL's `{data: …}`
+/// envelope, then renders an object as a key/value block or an array as a
+/// pipe-delimited table.
+pub fn render(v: &Value) {
+    let body = v.get("data").unwrap_or(v);
+    match body {
+        Value::Array(arr) => render_table(arr),
+        Value::Object(_) => render_kv(body, 0),
+        Value::Null => println!("(no data)"),
+        other => println!("{}", scalar(other)),
+    }
 }
 
-pub fn accounts(list: &[AccountSummary], json_flag: bool) {
-    if json_flag {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(list).unwrap_or_else(|_| "[]".into())
-        );
-        return;
-    }
-    if list.is_empty() {
-        println!("(no accounts found on this login)");
-        return;
-    }
-    for a in list {
-        let status = a.status_category.as_deref().unwrap_or("?");
-        println!("{}  [{status}]", a.account_number);
-        if let Some(addr) = a.address.as_deref() {
-            if !addr.is_empty() {
-                println!("   {addr}");
+fn render_kv(obj: &Value, indent: usize) {
+    let pad = " ".repeat(indent);
+    if let Some(map) = obj.as_object() {
+        for (k, val) in map {
+            match val {
+                Value::Object(_) => {
+                    println!("{pad}{k}:");
+                    render_kv(val, indent + 2);
+                }
+                Value::Array(arr) if arr.iter().all(|x| !x.is_object() && !x.is_array()) => {
+                    let joined = arr.iter().map(scalar).collect::<Vec<_>>().join(", ");
+                    println!("{pad}{k}: {joined}");
+                }
+                Value::Array(arr) => {
+                    println!("{pad}{k}: [{} items]", arr.len());
+                    render_table(arr);
+                }
+                other => println!("{pad}{k}: {}", scalar(other)),
             }
         }
     }
 }
 
-/// Render the county outage feed, optionally filtered by county substring.
-pub fn outages(v: &Value, filter: Option<&str>, json_flag: bool) {
-    let rows = v.get("outages").and_then(|x| x.as_array());
-    let needle = filter.map(|s| s.to_lowercase());
+/// Render an array of objects as a pipe-delimited table with `ALL_CAPS`
+/// headers. Falls back to one value per line for arrays of scalars.
+fn render_table(arr: &[Value]) {
+    if arr.is_empty() {
+        println!("(none)");
+        return;
+    }
+    if arr.iter().all(|x| !x.is_object()) {
+        for x in arr {
+            println!("{}", scalar(x));
+        }
+        return;
+    }
+    // Column order = union of keys, first-seen order.
+    let mut cols: Vec<String> = Vec::new();
+    for row in arr {
+        if let Some(map) = row.as_object() {
+            for k in map.keys() {
+                if !cols.iter().any(|c| c == k) {
+                    cols.push(k.clone());
+                }
+            }
+        }
+    }
+    println!(
+        "{}",
+        cols.iter()
+            .map(|c| c.to_uppercase())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    for row in arr {
+        let cells: Vec<String> = cols
+            .iter()
+            .map(|c| row.get(c).map(scalar).unwrap_or_default())
+            .collect();
+        println!("{}", cells.join(" | "));
+    }
+}
 
-    let matched: Vec<&Value> = rows
+pub fn accounts(list: &[AccountSummary]) {
+    if list.is_empty() {
+        println!("(no accounts found on this login)");
+        return;
+    }
+    println!("ACCOUNT | STATUS | ADDRESS");
+    for a in list {
+        println!(
+            "{} | {} | {}",
+            a.account_number,
+            a.status_category.as_deref().unwrap_or(""),
+            a.address.as_deref().unwrap_or("")
+        );
+    }
+}
+
+/// County outage feed, optionally filtered by county-name substring.
+pub fn outages(v: &Value, filter: Option<&str>) {
+    let needle = filter.map(|s| s.to_lowercase());
+    let matched: Vec<&Value> = v
+        .get("outages")
+        .and_then(|x| x.as_array())
         .map(|arr| {
             arr.iter()
                 .filter(|row| match &needle {
@@ -62,23 +135,13 @@ pub fn outages(v: &Value, filter: Option<&str>, json_flag: bool) {
         })
         .unwrap_or_default();
 
-    if json_flag {
-        let out: Vec<&Value> = matched;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&out).unwrap_or_else(|_| "[]".into())
-        );
-        return;
-    }
-
     if matched.is_empty() {
         println!("(no matching counties)");
         return;
     }
 
     let mut total_out: i64 = 0;
-    println!("{:<20} {:>12} {:>16}", "County", "Out", "Served");
-    println!("{:-<20} {:->12} {:->16}", "", "", "");
+    println!("COUNTY | OUT | SERVED");
     for row in &matched {
         let name = row
             .get("County Name")
@@ -93,19 +156,13 @@ pub fn outages(v: &Value, filter: Option<&str>, json_flag: bool) {
             .and_then(|c| c.as_str())
             .unwrap_or("0");
         total_out += out.replace(',', "").parse::<i64>().unwrap_or(0);
-        println!("{name:<20} {out:>12} {served:>16}");
+        println!("{name} | {out} | {served}");
     }
-    println!("{:-<20} {:->12} {:->16}", "", "", "");
-    println!("{:<20} {:>12}", "TOTAL OUT", total_out);
+    println!("TOTAL OUT | {total_out}");
 }
 
-/// Pull a few commonly-present fields off a balance/account payload for the
-/// human view, then print the raw JSON beneath for anything we didn't surface.
-pub fn balance(v: &Value, json_flag: bool) {
-    if json_flag {
-        json(v);
-        return;
-    }
+/// Balance read: pull common fields for the text block, else flatten.
+pub fn balance(v: &Value) {
     let data = v.get("data").unwrap_or(v);
     let mut printed = false;
     for (label, key) in [
@@ -118,19 +175,33 @@ pub fn balance(v: &Value, json_flag: bool) {
     ] {
         if let Some(val) = data.get(key) {
             if !val.is_null() {
-                println!("{label:<10} {}", scalar(val));
+                println!("{label}: {}", scalar(val));
                 printed = true;
             }
         }
     }
     if !printed {
-        json(v);
+        render(v);
     }
 }
 
 fn scalar(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
+        Value::Null => String::new(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn scalar_unwraps_strings() {
+        assert_eq!(scalar(&json!("hi")), "hi");
+        assert_eq!(scalar(&json!(3)), "3");
+        assert_eq!(scalar(&Value::Null), "");
     }
 }

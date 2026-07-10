@@ -10,9 +10,10 @@ labels: bug
 **Command + output**
 
 ```
-$ fpl ... --json
+$ fpl ...
 <output>
 ```
+For the raw payload of a resource read, include `fpl api GET <path>` output.
 
 > ⚠️ Redact before posting: remove your account number, service address, email,
 > and any dollar amounts you don't want public.

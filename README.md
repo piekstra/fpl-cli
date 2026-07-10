@@ -2,27 +2,28 @@
 
 Manage your **Florida Power & Light** account from the command line: check your
 balance, view and download bills, inspect energy usage, make a payment, and
-watch outages — all from a terminal, with a `--json` mode on every command so a
-person *or* an agent can script it.
+watch outages — from a terminal, with stable exit codes and text output a person
+*or* an agent can parse.
 
 FPL publishes no official public API. This is a polite client over the same
-`www.fpl.com` JSON services that FPL's own website and mobile app call. Endpoint
-paths were mapped from FPL's public service registry and cross-checked against
-the community Home Assistant integration — see [`docs/api.md`](docs/api.md).
+`www.fpl.com` JSON services that FPL's own website and mobile app call. It
+follows a small set of ergonomics: a fixed **verb** command surface,
+**keychain-only** runtime secrets with stdin/env ingress, **text-first** output,
+and a stable exit-code contract. Endpoint mapping is in
+[`docs/api.md`](docs/api.md).
 
 > **Status: work in progress.** The public **outage** feed needs no login and is
 > fully verified. Authenticated commands target real, confirmed-reachable
 > endpoints, but FPL's response *shapes* vary by account type and aren't all
-> pinned down yet, so most authenticated commands print the raw JSON payload for
-> now. Use `--json` (or `fpl api`) to see exactly what came back, and please open
-> an issue with a **redacted** snippet if a command's output looks off.
+> pinned down yet — reads render a best-effort flattened view of whatever comes
+> back. For the raw payload (and to help map a shape), use `fpl api`.
 
 ## Install
 
 ```sh
-cargo build --release          # binary at ./target/release/fpl
+make install          # cargo install --path . → the `fpl` binary on your PATH
 # or
-cargo install --path .         # installs the `fpl` binary onto your PATH
+cargo build --release # binary at ./target/release/fpl
 ```
 
 The crate/repo is `fpl-cli`; the binary is **`fpl`**. Requires a recent stable
@@ -31,92 +32,102 @@ secret store).
 
 ## Getting started
 
+Set up once. Your password is read from stdin or an env var and stored only in
+the OS keychain — there is deliberately no password flag.
+
 ```sh
-# Store your fpl.com credentials in the OS keychain and verify them.
-# Prompts (no echo) for the password; remembers your username + default account.
-$ fpl login
-FPL username (email): you@example.com
+# Interactive first-time setup (prompts, no echo):
+$ fpl init --username you@example.com
 FPL password for you@example.com: ********
-logged in as you@example.com; default account 1234567890
+stored credentials for you@example.com; active account 1234567890
+
+# Or fully scriptable (headless / CI / 1Password):
+$ op read 'op://Private/FPL/password' | fpl init --username you@example.com --password-stdin
+$ FPL_PW=... fpl init --username you@example.com --password-from-env FPL_PW
 
 # What's configured? (never prints the password)
-$ fpl status
-username:  you@example.com
-account:   1234567890
-password:  stored in keychain
+$ fpl auth status
+username: you@example.com
+account:  1234567890
+password: stored in keychain
 ```
 
-Your **password lives only in the OS keychain** (macOS Keychain / Windows
-Credential Manager / Linux Secret Service). Your username and default account
-number are cached in `~/.config/fpl-cli/config.json` (no secrets). Nothing
-authenticates over the network except the login call itself.
+Rotate a stored password without re-running full setup:
+
+```sh
+op read 'op://Private/FPL/password' | fpl set-credential --stdin --overwrite
+```
 
 ## Commands
 
-### Account
+The surface is resource groups + fixed verbs (`list`, `get`, `use`, `create`).
+Most commands take an optional `[account-id]`; omit it to use the active account
+(set with `accounts use`, or the first account on your login).
+
+### Accounts
 
 ```sh
-fpl accounts          # list the accounts on your login
-fpl account           # service address, meter, bill cycle, enrolled programs
-fpl balance           # current balance and due date
+fpl accounts list                 # all accounts on your login
+fpl accounts get [account-id]     # service address, meter, bill cycle, programs
+fpl accounts use <account-id>     # set the active account for later commands
+fpl accounts balance [account-id] # current balance and due date
 ```
 
-### Billing
+### Bills
 
 ```sh
-fpl bill current      # this period: projected bill, bill-to-date, daily average
-fpl bill projected    # projected end-of-cycle bill
-fpl bill history      # prior bills (amounts, dates, usage)
-fpl bill budget       # Budget Billing plan status + monthly graph
-fpl bill download --out my-bill.pdf   # download your latest bill PDF
+fpl bills get [account-id]        # this period: projected bill, bill-to-date, daily avg
+fpl bills projected [account-id]  # projected end-of-cycle bill
+fpl bills list [account-id]       # prior bills (amounts, dates, usage)
+fpl bills budget [account-id]     # Budget Billing plan status + monthly graph
+fpl bills download [account-id] -o my-bill.pdf   # download the latest bill PDF
 ```
 
 ### Payments
 
 ```sh
-fpl pay methods       # saved payment methods / options
-fpl pay history       # payments from the account ledger
-fpl pay make --amount 123.45              # make a payment (asks to confirm)
-fpl pay make --amount 123.45 --date 08-01-2026 --method <id> --yes
+fpl payments list [account-id]    # payments from the account ledger
+fpl payments methods [account-id] # saved payment methods / options
+fpl payments create --amount 123.45              # make a payment (asks to confirm)
+fpl payments create --amount 123.45 --date 08-01-2026 --method <id> --force
 ```
 
-`fpl pay make` **will not submit without confirmation** — it prompts `[y/N]`, or
-requires `--yes` in a non-interactive shell. Money movement is hard to reverse,
-so treat `--yes` as the explicit go-ahead.
+`payments create` **will not submit without confirmation** — it prompts `[y/N]`,
+or requires `--force` in a non-interactive shell. Money movement is hard to
+reverse, so `--force` is the explicit go-ahead.
 
 ### Usage
 
 ```sh
-fpl usage summary     # current-period kWh, projected cost, daily average
-fpl usage hourly --date 07-04-2026    # hourly kWh for one day (default: yesterday)
-fpl usage appliances  # appliance-level (disaggregated) breakdown
+fpl usage get [account-id]                 # current-period kWh, projected cost, daily avg
+fpl usage hourly [account-id] --date 07-04-2026   # hourly kWh (default: yesterday)
+fpl usage appliances [account-id]          # appliance-level (disaggregated) breakdown
 ```
 
 ### History
 
 ```sh
-fpl history account   # transactions: charges, payments, adjustments
-fpl history deposit   # deposit history
-fpl history documents # documents available to download
+fpl history list [account-id]                 # account ledger (default --type account)
+fpl history list [account-id] --type deposit  # deposit history
+fpl history list [account-id] --type document # documents available to download
+fpl history types                             # valid --type values
 ```
 
 ### Outages (no login required)
 
 ```sh
-$ fpl outages --county broward
-County                        Out           Served
--------------------- ------------ ----------------
-Broward                        70          853,654
--------------------- ------------ ----------------
-TOTAL OUT                      70
+$ fpl outages list --name broward
+COUNTY | OUT | SERVED
+Broward | 70 | 853,654
+TOTAL OUT | 70
 
-fpl outages                   # all counties FPL serves
-fpl outages --county miami --json
+fpl outages list                  # all counties FPL serves
 ```
 
 ### Raw API escape hatch
 
-Anything not yet wrapped in a subcommand — hit it directly with your session:
+Anything not yet wrapped in a subcommand — or the raw JSON of one — with your
+session:
 
 ```sh
 fpl api GET /cs/customer/v1/resources/header
@@ -126,35 +137,40 @@ fpl api POST /cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS
 Paths are relative to `https://www.fpl.com` (or pass a full URL). Output is
 always JSON.
 
-## JSON & scripting
+## Output & scripting
 
-Every command takes `--json` (machine output on stdout; diagnostics on stderr):
+**Text is the default.** Resource reads render `Key: value` blocks and
+pipe-delimited tables (`ALL_CAPS` headers) — token-dense and parseable without
+JSON. JSON is reserved for control-plane signals: `init`/`set-credential`
+results (`--json`), `auth status --json`, and `fpl api` (always JSON). For the
+raw structure of a resource read, pipe it through `fpl api`.
+
+Data goes to stdout; diagnostics and confirmations go to stderr.
 
 ```sh
 # Total customers out across all FPL counties:
-fpl outages --json | jq '[.[] | (.["Customers Out"] | gsub(",";"") | tonumber)] | add'
-
-# Your current balance amount:
-fpl balance --json | jq -r '.data.amount // .data.balance'
+fpl api GET https://www.fplmaps.com/customer/outage/CountyOutages.json \
+  | jq '[.outages[] | (.["Customers Out"] | gsub(",";"") | tonumber)] | add'
 ```
 
 ### Global flags
 
 | Flag | Meaning |
 |------|---------|
-| `--json` | Machine-readable JSON on stdout |
+| `-a, --account <number>` | Account to act on (else active account → first account) |
+| `--username <email>` | Login (else config → `$FPL_USERNAME`) |
 | `-v, --verbose` | Extra diagnostics on stderr (never secrets) |
 | `-q, --quiet` | Suppress non-error stderr output |
-| `--username <email>` | Override login (else config → `$FPL_USERNAME` → prompt) |
-| `--account <number>` | Override account (else config → first account) |
 
 ### Environment variables
 
 | Var | Purpose |
 |-----|---------|
 | `FPL_USERNAME` | Default login email |
-| `FPL_PASSWORD` | Password (skips the keychain/prompt — handy for CI) |
 | `FPL_ACCOUNT` | Default account number |
+
+Secrets never enter through an env var the CLI reads at runtime — pass them to
+`init`/`set-credential` via `--password-from-env` / `--from-env` at setup time.
 
 ### Exit codes
 

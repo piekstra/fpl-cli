@@ -1,15 +1,42 @@
 //! Secret handling for fpl-cli.
 //!
-//! Precedence: **OS keychain → environment variable → interactive prompt**.
+//! Runtime secrets live only in the OS keychain. Getting a secret *into* the
+//! keychain is a setup-time concern handled by `fpl init` / `fpl set-credential`,
+//! which ingest via stdin or a named env var — never a `--value` flag (that
+//! leaks into `ps`, shell history, and pasted transcripts).
+//!
 //! Secrets never appear in `Debug`/`Display` output and are zeroized on drop.
 
 use std::fmt;
-use std::io::IsTerminal;
+use std::io::Read;
 
 use keyring::Entry;
 use zeroize::Zeroize;
 
 use crate::error::AppError;
+
+/// Read exactly one secret from stdin (all of it, trailing newline trimmed).
+/// The scriptable ingress path: `op read … | fpl set-credential --stdin`.
+pub fn read_stdin() -> Result<Secret, AppError> {
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| AppError::Other(format!("reading secret from stdin: {e}")))?;
+    // Trim a single trailing newline (and CR) so heredocs/echo pipes work.
+    let trimmed = buf.strip_suffix('\n').unwrap_or(&buf);
+    let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+    Ok(Secret::new(trimmed.to_string()))
+}
+
+/// Read one secret from a named environment variable (`--from-env FPL_PASSWORD`).
+/// Bounded-scope ingress for `op run --`-style invocations.
+pub fn read_from_env(var: &str) -> Result<Secret, AppError> {
+    match std::env::var(var) {
+        Ok(v) if !v.is_empty() => Ok(Secret::new(v)),
+        Ok(_) => Err(AppError::Usage(format!("${var} is set but empty"))),
+        Err(_) => Err(AppError::Usage(format!("${var} is not set"))),
+    }
+}
 
 /// A secret string that refuses to reveal itself via `Debug`/`Display` and is
 /// zeroized from memory when dropped. Read it only at the point of use, with
@@ -33,6 +60,13 @@ impl Secret {
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    /// No-echo interactive prompt. Caller must have already confirmed a TTY.
+    pub fn prompt(label: &str) -> Result<Secret, AppError> {
+        let v = rpassword::prompt_password(format!("{label}: "))
+            .map_err(|e| AppError::Other(format!("reading password: {e}")))?;
+        Ok(Secret::new(v))
+    }
 }
 
 impl fmt::Debug for Secret {
@@ -53,25 +87,7 @@ impl Drop for Secret {
     }
 }
 
-/// Where a resolved credential was found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    Keychain,
-    Env(String),
-    Prompt,
-}
-
-impl fmt::Display for Source {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Source::Keychain => write!(f, "keychain"),
-            Source::Env(var) => write!(f, "env:{var}"),
-            Source::Prompt => write!(f, "prompt"),
-        }
-    }
-}
-
-/// OS-keychain-backed credential store with env + prompt fallbacks.
+/// OS-keychain-backed credential store. The only runtime source of secrets.
 pub struct CredentialStore {
     service: String,
 }
@@ -113,34 +129,6 @@ impl CredentialStore {
             Err(e) => Err(AppError::Keychain(format!("deleting credential: {e}"))),
         }
     }
-
-    /// Full precedence resolution: keychain, then `$env_var`, then (if a TTY and
-    /// `allow_prompt`) a no-echo prompt. Errors with [`AppError::Auth`] if none
-    /// resolve.
-    pub fn resolve(
-        &self,
-        account: &str,
-        env_var: &str,
-        prompt_label: &str,
-        allow_prompt: bool,
-    ) -> Result<(Secret, Source), AppError> {
-        if let Some(s) = self.get(account)? {
-            return Ok((s, Source::Keychain));
-        }
-        if let Ok(v) = std::env::var(env_var) {
-            if !v.is_empty() {
-                return Ok((Secret::new(v), Source::Env(env_var.to_string())));
-            }
-        }
-        if allow_prompt && std::io::stdin().is_terminal() {
-            let v = rpassword::prompt_password(format!("{prompt_label}: "))
-                .map_err(|e| AppError::Other(format!("reading prompt: {e}")))?;
-            return Ok((Secret::new(v), Source::Prompt));
-        }
-        Err(AppError::Auth(format!(
-            "no password for {account:?} — run `fpl login --username {account}` or set ${env_var}"
-        )))
-    }
 }
 
 #[cfg(test)]
@@ -155,15 +143,5 @@ mod tests {
         assert_eq!(s.expose(), "super-secret-token");
         assert!(!s.is_empty());
         assert!(Secret::new("").is_empty());
-    }
-
-    #[test]
-    fn source_displays_human_readable() {
-        assert_eq!(Source::Keychain.to_string(), "keychain");
-        assert_eq!(
-            Source::Env("FPL_PASSWORD".into()).to_string(),
-            "env:FPL_PASSWORD"
-        );
-        assert_eq!(Source::Prompt.to_string(), "prompt");
     }
 }

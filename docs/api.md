@@ -40,23 +40,23 @@ premise number from account detail.
 
 | Command | Method | Path |
 |---------|--------|------|
-| `accounts` | GET | `/cs/customer/v1/resources/account?sortBy=status&count=10&start=1` |
-| `accounts` (fallback) | POST | `/cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS` |
-| `account` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/select?view=account-lander` |
-| `balance` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/balance` |
-| `bill history` | GET | `/cs/customer/v1/sumbillaccount/resources/account/{account}/bill-history` |
-| `bill projected` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/projectedBill?premiseNumber={premise}&lastBilledDate={MMDDYYYY}` |
-| `bill budget` | GET | `/cs/customer/v1/budgetbillingapi/resources/account/{account}/budgetBillingGraph` |
-| `bill download` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/download` |
-| `bill current` / `usage summary` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-energy-service` |
+| `accounts list` | GET | `/cs/customer/v1/resources/account?sortBy=status&count=10&start=1` |
+| `accounts list` (fallback) | POST | `/cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS` |
+| `accounts get` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/select?view=account-lander` |
+| `accounts balance` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/balance` |
+| `bills list` | GET | `/cs/customer/v1/sumbillaccount/resources/account/{account}/bill-history` |
+| `bills projected` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/projectedBill?premiseNumber={premise}&lastBilledDate={MMDDYYYY}` |
+| `bills budget` | GET | `/cs/customer/v1/budgetbillingapi/resources/account/{account}/budgetBillingGraph` |
+| `bills download` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/download` |
+| `bills get` / `usage get` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-energy-service` |
 | `usage hourly` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-hourly-usage` |
 | `usage appliances` | POST | `/cs/customer/v1/energyanalyzer/resources/{account}/getDisaggResp` |
-| `pay methods` | GET | `/cs/customer/v1/paymentservices/resources/account/{account}/payment-option` |
-| `pay make` | POST | `/cs/customer/v1/paymentservices/resources/account/{account}/payment` |
-| `pay history` / `history account` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/account-history` |
-| `history deposit` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history` |
-| `history documents` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/document-history` |
-| `outages` | GET | `https://www.fplmaps.com/customer/outage/CountyOutages.json` *(public, no auth)* |
+| `payments methods` | GET | `/cs/customer/v1/paymentservices/resources/account/{account}/payment-option` |
+| `payments create` | POST | `/cs/customer/v1/paymentservices/resources/account/{account}/payment` |
+| `payments list` / `history list --type account` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/account-history` |
+| `history list --type deposit` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history` |
+| `history list --type document` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/document-history` |
+| `outages list` | GET | `https://www.fplmaps.com/customer/outage/CountyOutages.json` *(public, no auth)* |
 
 ### Request-body notes
 
@@ -81,3 +81,11 @@ Budget Billing enrollment (`/cs/customer/v1/budgetbillingapi/resources/programEn
 multi-account management (`/cs/customer/v1/multiaccount/…`), preferences,
 outage reporting (`/cs/customer/v1/wors/public/…`), and more. Reach any of them
 with `fpl api <METHOD> <PATH>` until a first-class command exists.
+
+## Adding a first-class command
+
+New endpoints go in `src/client.rs` as a method returning `serde_json::Value`,
+wired to a verb in `src/cli.rs` and a handler in `src/commands/<group>.rs`. Reads
+render through `output::render` (text); don't add `--json` to a read — `fpl api`
+is the raw-JSON path. Once you can confirm a response shape from a real
+(redacted) payload, add a purpose-built renderer in `src/output.rs`.
