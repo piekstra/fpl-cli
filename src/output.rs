@@ -239,7 +239,11 @@ pub fn bill_summary(v: &Value) {
         ("Avg high temp", "avgHighTemp", false),
     ] {
         if let Some(val) = node.get(key).filter(|x| !x.is_null()) {
-            let s = if is_money { money(Some(val)) } else { scalar(val) };
+            let s = if is_money {
+                money(Some(val))
+            } else {
+                scalar(val)
+            };
             if !s.is_empty() {
                 println!("{label:<16}{s}");
                 any = true;
@@ -335,7 +339,10 @@ pub fn hourly(v: &Value) {
             let mut cost = 0.0;
             for r in rows {
                 kwh += r.get("kwhActual").and_then(|x| x.as_f64()).unwrap_or(0.0);
-                cost += r.get("billingCharged").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                cost += r
+                    .get("billingCharged")
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0);
                 println!(
                     "{} | {} | {} | {}",
                     cell(r.get("hour")),
@@ -355,7 +362,11 @@ pub fn appliances(v: &Value) {
     let periods = v.pointer("/data/billPeriods").and_then(|x| x.as_array());
     let latest = periods.and_then(|ps| {
         ps.iter()
-            .find(|p| p.get("billPeriod").map(|b| scalar(b) == "1").unwrap_or(false))
+            .find(|p| {
+                p.get("billPeriod")
+                    .map(|b| scalar(b) == "1")
+                    .unwrap_or(false)
+            })
             .or_else(|| ps.first())
     });
     let Some(p) = latest else {
@@ -432,10 +443,13 @@ pub fn payments_list(v: &Value) {
                     .and_then(|x| x.as_f64())
                     .map(|n| format!("${:.2}", n.abs()))
                     .unwrap_or_default();
-                println!("{} | {}", short_date(r.get("debitCreditTransactionDate")), amt);
+                println!(
+                    "{} | {}",
+                    short_date(r.get("debitCreditTransactionDate")),
+                    amt
+                );
             }
         }
         _ => render(v),
     }
 }
-

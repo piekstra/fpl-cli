@@ -7,7 +7,6 @@ use crate::commands::Ctx;
 use crate::config::Config;
 use crate::error::AppError;
 
-
 pub fn run(ctx: &Ctx, cmd: &AuthCommand) -> Result<(), AppError> {
     match cmd {
         AuthCommand::Login(args) => crate::commands::init::run(ctx, args),

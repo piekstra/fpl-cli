@@ -16,11 +16,19 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
     match cmd {
         PaymentsCommand::List { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(ctx.cli.json, &fpl.account_history(&account)?, output::payments_list);
+            output::emit(
+                ctx.cli.json,
+                &fpl.account_history(&account)?,
+                output::payments_list,
+            );
         }
         PaymentsCommand::Methods { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(ctx.cli.json, &fpl.payment_options(&account)?, output::render);
+            output::emit(
+                ctx.cli.json,
+                &fpl.payment_options(&account)?,
+                output::render,
+            );
         }
         PaymentsCommand::Create {
             amount,
@@ -62,7 +70,11 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
             if let Some(m) = method {
                 body["paymentMethod"] = Value::String(m.clone());
             }
-            output::emit(ctx.cli.json, &fpl.make_payment(&account, &body)?, output::render);
+            output::emit(
+                ctx.cli.json,
+                &fpl.make_payment(&account, &body)?,
+                output::render,
+            );
         }
     }
     Ok(())

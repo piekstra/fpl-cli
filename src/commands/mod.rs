@@ -69,7 +69,9 @@ pub fn info(_ctx: &Ctx) -> Result<(), AppError> {
             method: "password".into(),
             login_hint: Some("fpl auth login".into()),
         },
-        &["accounts", "bills", "payments", "usage", "history", "outages", "lookup", "api"],
+        &[
+            "accounts", "bills", "payments", "usage", "history", "outages", "lookup", "api",
+        ],
     );
     crate::output::json(&serde_json::to_value(&info).unwrap_or_default());
     Ok(())

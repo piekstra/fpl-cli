@@ -19,8 +19,16 @@ pub fn run(ctx: &Ctx, cmd: &HistoryCommand) -> Result<(), AppError> {
             let fpl = ctx.connect()?;
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
             match r#type.to_lowercase().as_str() {
-                "account" => output::emit(ctx.cli.json, &fpl.account_history(&account)?, output::ledger),
-                "deposit" => output::emit(ctx.cli.json, &fpl.deposit_history(&account)?, output::render),
+                "account" => output::emit(
+                    ctx.cli.json,
+                    &fpl.account_history(&account)?,
+                    output::ledger,
+                ),
+                "deposit" => output::emit(
+                    ctx.cli.json,
+                    &fpl.deposit_history(&account)?,
+                    output::render,
+                ),
                 other => {
                     return Err(AppError::Usage(format!(
                         "unknown history type {other:?} — valid: {} (see `fpl history types`)",

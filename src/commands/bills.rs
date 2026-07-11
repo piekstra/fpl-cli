@@ -10,17 +10,29 @@ pub fn run(ctx: &Ctx, cmd: &BillsCommand) -> Result<(), AppError> {
     match cmd {
         BillsCommand::List { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(ctx.cli.json, &fpl.bill_history(&account)?, output::bills_list);
+            output::emit(
+                ctx.cli.json,
+                &fpl.bill_history(&account)?,
+                output::bills_list,
+            );
         }
         BillsCommand::Get { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
             let c = account_ctx(&fpl, &account)?;
-            output::emit(ctx.cli.json, &fpl.energy_usage(&account, &c.premise, &c.last_billed, &c.meter)?, output::bill_summary);
+            output::emit(
+                ctx.cli.json,
+                &fpl.energy_usage(&account, &c.premise, &c.last_billed, &c.meter)?,
+                output::bill_summary,
+            );
         }
         BillsCommand::Projected { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
             let c = account_ctx(&fpl, &account)?;
-            output::emit(ctx.cli.json, &fpl.projected_bill(&account, &c.premise, &c.last_billed)?, output::bill_summary);
+            output::emit(
+                ctx.cli.json,
+                &fpl.projected_bill(&account, &c.premise, &c.last_billed)?,
+                output::bill_summary,
+            );
         }
         BillsCommand::Budget { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
