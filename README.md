@@ -64,13 +64,14 @@ The surface is resource groups + fixed verbs (`list`, `get`, `use`, `create`).
 Most commands take an optional `[account-id]`; omit it to use the active account
 (set with `accounts use`, or the first account on your login).
 
-### Accounts
+### Accounts & profile
 
 ```sh
-fpl accounts list                 # all accounts on your login
+fpl accounts list                 # all accounts with status, balance, and address
 fpl accounts get [account-id]     # service address, meter, bill cycle, programs
 fpl accounts use <account-id>     # set the active account for later commands
 fpl accounts balance [account-id] # current balance and due date
+fpl profile [account-id]          # account holder: name, email, phone, mailing address
 ```
 
 ### Bills
@@ -109,6 +110,20 @@ fpl usage appliances [account-id]          # appliance-level (disaggregated) bre
 fpl history list [account-id]                 # account ledger (default --type account)
 fpl history list [account-id] --type deposit  # deposit history
 fpl history types                             # valid --type values
+```
+
+### Meter & alerts
+
+```sh
+fpl meter [account-id]    # smart-meter (AMI) status: reporting, breaker state, ping window
+fpl alerts [account-id]   # account alert/banner state (balance alerts, collection thresholds)
+```
+
+### Reference data (no login required for the data itself)
+
+```sh
+fpl lookup cities   # Florida cities in FPL's service territory
+fpl lookup zips     # Florida ZIP codes in FPL's service territory
 ```
 
 ### Outages (no login required)

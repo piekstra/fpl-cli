@@ -45,6 +45,7 @@ pub struct AccountSummary {
     pub account_number: String,
     pub status_category: Option<String>,
     pub address: Option<String>,
+    pub balance: Option<String>,
 }
 
 fn build_client() -> Result<reqwest::blocking::Client, AppError> {
@@ -226,8 +227,61 @@ impl Fpl {
 
     // ---- Account discovery -------------------------------------------------
 
-    /// List the caller's accounts (paginates the customer account endpoint).
+    /// The portal header: the signed-in customer plus every account with its
+    /// service address, balance, and status.
+    pub fn header(&self) -> Result<Value, AppError> {
+        self.get("/cs/customer/v1/resources/header")
+    }
+
+    /// Parse the header's per-account rows into summaries (address + balance).
+    fn header_accounts(&self) -> Result<Vec<AccountSummary>, AppError> {
+        let header = self.header()?;
+        let rows = header
+            .pointer("/data/accounts/data/data")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        for a in &rows {
+            let Some(num) = a.get("accountNumber").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let address = a.get("serviceAddress").map(|addr| {
+                let line1 = addr.get("line1").and_then(|v| v.as_str()).unwrap_or("");
+                let city = addr.get("city").and_then(|v| v.as_str()).unwrap_or("");
+                [line1, city]
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            });
+            let balance = a.get("balance").map(|b| match b {
+                Value::Number(n) => format!("${:.2}", n.as_f64().unwrap_or(0.0)),
+                other => other.to_string(),
+            });
+            out.push(AccountSummary {
+                account_number: num.to_string(),
+                status_category: a
+                    .get("statusName")
+                    .or_else(|| a.get("statusCategory"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                address: address.filter(|s| !s.is_empty()),
+                balance,
+            });
+        }
+        Ok(out)
+    }
+
+    /// List the caller's accounts. Prefers the header endpoint (one call, with
+    /// address + balance), falling back to the paginated list + `loginNew`.
     pub fn accounts(&self) -> Result<Vec<AccountSummary>, AppError> {
+        if let Ok(list) = self.header_accounts() {
+            if !list.is_empty() {
+                return Ok(list);
+            }
+        }
         let mut out = Vec::new();
         let mut start = 1;
         let page = 10;
@@ -257,6 +311,7 @@ impl Fpl {
                             .or_else(|| a.get("premiseAddress"))
                             .and_then(|v| v.as_str())
                             .map(String::from),
+                        balance: None,
                     });
                 }
             }
@@ -290,6 +345,10 @@ impl Fpl {
                                 address: a
                                     .get("serviceAddress")
                                     .or_else(|| a.get("premiseAddress"))
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                balance: a
+                                    .get("balance")
                                     .and_then(|v| v.as_str())
                                     .map(String::from),
                             });
@@ -448,6 +507,36 @@ impl Fpl {
             &format!("/cs/customer/v1/energyanalyzer/resources/{account}/getDisaggResp"),
             &body,
         )
+    }
+
+    // ---- Diagnostics & notifications ---------------------------------------
+
+    /// Smart-meter (AMI) status: whether the meter is reporting, breaker state,
+    /// and the ping window. What the outage-status page uses to check a meter.
+    pub fn meter_status(&self, account: &str) -> Result<Value, AppError> {
+        self.post(
+            "/cs/customer/v1/wors/public/amiping",
+            &json!({ "accountNumber": account }),
+        )
+    }
+
+    /// Account alert/banner state (balance alerts, collection thresholds, flags).
+    pub fn alerts(&self, account: &str) -> Result<Value, AppError> {
+        self.get(&format!(
+            "/cs/customer/v1/profileservices/resources/account/{account}/alert-notification"
+        ))
+    }
+
+    // ---- Public reference data ---------------------------------------------
+
+    /// FPL-served Florida cities.
+    pub fn cities(&self) -> Result<Value, AppError> {
+        self.get("/cs/customer/v1/connect-journey/public/city")
+    }
+
+    /// FPL-served Florida ZIP codes.
+    pub fn zips(&self) -> Result<Value, AppError> {
+        self.get("/cs/customer/v1/connect-journey/public/zip")
     }
 
     // ---- Session -----------------------------------------------------------

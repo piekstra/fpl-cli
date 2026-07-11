@@ -1,6 +1,6 @@
 [package]
 name = "fpl-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.75"
 description = "Manage your Florida Power & Light account from the command line — Keychain-secured, agent-friendly. Work in progress."

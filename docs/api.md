@@ -42,7 +42,12 @@ premise number from account detail.
 |---------|--------|------|
 | `accounts list` | GET | `/cs/customer/v1/resources/account?sortBy=status&count=10&start=1` |
 | `accounts list` (fallback) | POST | `/cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS` |
+| `accounts list` / `profile` | GET | `/cs/customer/v1/resources/header` (customer + all accounts with address/balance/status) |
 | `accounts get` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/select?view=account-lander` |
+| `meter` | POST | `/cs/customer/v1/wors/public/amiping` (body `{accountNumber}`) |
+| `alerts` | GET | `/cs/customer/v1/profileservices/resources/account/{account}/alert-notification` |
+| `lookup cities` | GET | `/cs/customer/v1/connect-journey/public/city` |
+| `lookup zips` | GET | `/cs/customer/v1/connect-journey/public/zip` |
 | `accounts balance` | POST | `/cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS` (balance fields per account) |
 | `bills list` | GET | `/cs/customer/v1/sumbillaccount/resources/account/{account}/bill-history` |
 | `bills projected` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/projectedBill?premiseNumber={premise}&lastBilledDate={MMDDYYYY}` |
@@ -83,15 +88,28 @@ bill's amounts, dates, and usage as text.
   hasn't been confirmed against a live submission. Verify with a small amount, or
   use `fpl api` with a payload you've captured, before relying on it.
 
-## Other known endpoints (not yet wrapped)
+## Other known endpoints (not wrapped)
 
-The service registry exposes much more than `fpl-cli` wraps today — automatic
-bill pay (`/cs/customer/v1/api/automaticbillpayment/resources/program`),
-paperless/eBill enrollment (`/cs/customer/v1/programenrollment/resources/ebill`),
-Budget Billing enrollment (`/cs/customer/v1/budgetbillingapi/resources/programEnrollment`),
-multi-account management (`/cs/customer/v1/multiaccount/…`), preferences,
-outage reporting (`/cs/customer/v1/wors/public/…`), and more. Reach any of them
-with `fpl api <METHOD> <PATH>` until a first-class command exists.
+The service registry (`/data/serviceconfparameters.js`) lists ~120 endpoints.
+`fpl-cli` wraps the account/billing/usage/history/diagnostics **read** surface.
+The rest fall into a few buckets, reachable via `fpl api <METHOD> <PATH>`:
+
+- **Mutations we deliberately don't wrap:** enrollment flows — automatic bill
+  pay (`/api/automaticbillpayment/resources/program`), paperless/eBill
+  (`/programenrollment/resources/ebill`), Budget Billing enrollment
+  (`/budgetbillingapi/resources/programEnrollment`) — plus start/stop/transfer
+  service (`/connect-journey/…`, `/serviceorder/…`, `/transfer/…`) and trouble
+  reporting (street light, vegetation, wire-down, flicker submit-ticket).
+- **Probed but not viable on a standard residential account:** `multiaccount`
+  (`getMultiAccounts` is a contact-*edit* endpoint expecting a body, not a read;
+  the read variants `400`/`401` without a linked multi-account setup); Solar
+  Together (`/solartogether-api/…` returns `401` unless enrolled); the pay-agent
+  locator (`api-dee.fpl.com/cs/v1/payagentlocator`, `400` for every param
+  combination tried); high-bill report and per-account contact endpoints
+  (`email-address`/`phone-number`/`ccin`, all `404` at the registry-implied
+  paths — contact info is available via `fpl profile` instead).
+- **Northwest / former-Gulf-Power region (`/cs/gulf/ssp/…`):** a separate service
+  tree behind AWS Cognito login; unsupported.
 
 ## Adding a first-class command
 

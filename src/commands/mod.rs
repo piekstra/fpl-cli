@@ -2,13 +2,17 @@
 //! resolution and prompt helpers live here on [`Ctx`].
 
 pub mod accounts;
+pub mod alerts;
 pub mod api;
 pub mod auth;
 pub mod bills;
 pub mod history;
 pub mod init;
+pub mod lookup;
+pub mod meter;
 pub mod outages;
 pub mod payments;
+pub mod profile;
 pub mod set_credential;
 pub mod update;
 pub mod usage;

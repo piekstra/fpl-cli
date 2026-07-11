@@ -75,6 +75,28 @@ pub enum Command {
     #[command(subcommand)]
     History(HistoryCommand),
 
+    /// Account holder's contact profile (name, email, phone, mailing address).
+    Profile {
+        /// Account number (defaults to active / --account).
+        account_id: Option<String>,
+    },
+
+    /// Smart-meter (AMI) status: reporting, breaker state, ping window.
+    Meter {
+        /// Account number (defaults to active / --account).
+        account_id: Option<String>,
+    },
+
+    /// Account alert/banner state (balance alerts, collection thresholds).
+    Alerts {
+        /// Account number (defaults to active / --account).
+        account_id: Option<String>,
+    },
+
+    /// Public FPL reference data (no login required).
+    #[command(subcommand)]
+    Lookup(LookupCommand),
+
     /// Public power-outage counts (no login required).
     #[command(subcommand)]
     Outages(OutagesCommand),
@@ -267,6 +289,14 @@ pub enum HistoryCommand {
     },
     /// List the valid `--type` values for `history list`.
     Types,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LookupCommand {
+    /// Florida cities in FPL's service territory.
+    Cities,
+    /// Florida ZIP codes in FPL's service territory.
+    Zips,
 }
 
 #[derive(Subcommand, Debug)]

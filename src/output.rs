@@ -104,13 +104,54 @@ pub fn accounts(list: &[AccountSummary]) {
         println!("(no accounts found on this login)");
         return;
     }
-    println!("ACCOUNT | STATUS | ADDRESS");
+    println!("ACCOUNT | STATUS | BALANCE | ADDRESS");
     for a in list {
         println!(
-            "{} | {} | {}",
+            "{} | {} | {} | {}",
             a.account_number,
             a.status_category.as_deref().unwrap_or(""),
+            a.balance.as_deref().unwrap_or(""),
             a.address.as_deref().unwrap_or("")
+        );
+    }
+}
+
+/// The account holder's contact profile, pulled from account detail.
+pub fn profile(detail: &Value) {
+    let p = detail
+        .pointer("/data/accountProfile")
+        .unwrap_or(&Value::Null);
+    if !p.is_object() {
+        render(detail);
+        return;
+    }
+    let field = |ptr: &str| p.pointer(ptr).map(scalar).filter(|s| !s.is_empty());
+
+    if let Some(name) = field("/accountName").or_else(|| field("/name/fullName")) {
+        println!("Name:    {name}");
+    }
+    if let Some(email) = field("/emailAddress").or_else(|| field("/emailAddressData/value")) {
+        println!("Email:   {email}");
+    }
+    if let Some(phone) = field("/accountPhone/value") {
+        println!("Phone:   {phone}");
+    }
+    let addr = [
+        "/billAddress/line1",
+        "/billAddress/city",
+        "/billAddress/state",
+        "/billAddress/zip",
+    ]
+    .iter()
+    .filter_map(|ptr| field(ptr))
+    .collect::<Vec<_>>();
+    if !addr.is_empty() {
+        // "line1, city, state zip"
+        let street = addr.first().cloned().unwrap_or_default();
+        let rest = addr[1..].join(" ");
+        println!(
+            "Address: {street}{}{rest}",
+            if rest.is_empty() { "" } else { ", " }
         );
     }
 }

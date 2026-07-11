@@ -19,7 +19,7 @@ before touching `src/client.rs`.
 |------|----------------|
 | `src/main.rs` | thin entrypoint; parses args, dispatches |
 | `src/cli.rs` | `clap` command tree (verbs + args) |
-| `src/commands/*.rs` | one handler module per resource group |
+| `src/commands/*.rs` | one handler module per resource group (accounts, bills, payments, usage, history, profile, meter, alerts, lookup, outages, …) |
 | `src/client.rs` | `Fpl` HTTP client: login, session, endpoints, raw `request` |
 | `src/secrets.rs` | `Secret` (redacting/zeroizing) + `CredentialStore` + ingress |
 | `src/config.rs` | `~/.config/fpl-cli/config.json` (non-secret prefs) |
