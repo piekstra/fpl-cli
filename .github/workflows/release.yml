@@ -1,8 +1,10 @@
 name: release
 
-# Cut a release by pushing a tag like `v0.1.0`. Builds per-platform tarballs
-# named `fpl-<target-triple>.tar.gz` (what `fpl update` looks for) and attaches
-# them to the GitHub Release.
+# Cut a release by pushing a tag like `v0.1.0`. One Linux job and ONE macOS
+# job (Apple Silicon, which cross-compiles the Intel target — the macOS SDK is
+# universal). Jobs are independent (fail-fast: false) and each attaches its own
+# assets, so a slow or dead macOS queue can never block the Linux assets and
+# only one macOS runner is ever needed.
 on:
   push:
     tags: ["v*"]
@@ -12,35 +14,35 @@ permissions:
 
 jobs:
   build:
-    name: build ${{ matrix.target }}
+    name: build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: macos-latest
-            target: x86_64-apple-darwin
+          - os: macos-14
+            name: apple (aarch64 + x86_64)
+            targets: "aarch64-apple-darwin x86_64-apple-darwin"
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            name: linux x86_64
+            targets: "x86_64-unknown-linux-gnu"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - name: Install Linux keychain deps
+      - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-      - name: Package
+      - name: Build and package each target
         run: |
-          tar -C target/${{ matrix.target }}/release -czf fpl-${{ matrix.target }}.tar.gz fpl
-          shasum -a 256 fpl-${{ matrix.target }}.tar.gz > fpl-${{ matrix.target }}.tar.gz.sha256
+          for t in ${{ matrix.targets }}; do
+            rustup target add "$t"
+            cargo build --release --target "$t"
+            tar -C "target/$t/release" -czf "fpl-$t.tar.gz" fpl
+            shasum -a 256 "fpl-$t.tar.gz" > "fpl-$t.tar.gz.sha256"
+          done
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            fpl-${{ matrix.target }}.tar.gz
-            fpl-${{ matrix.target }}.tar.gz.sha256
+            fpl-*.tar.gz
+            fpl-*.tar.gz.sha256
