@@ -9,7 +9,7 @@ use crate::error::AppError;
 
 pub fn run(ctx: &Ctx, args: &SelfUpdateArgs) -> Result<(), AppError> {
     Updater {
-        repo: "piekstra/fpl".into(),
+        repo: "piekstra/fpl-cli".into(),
         binary: "fpl".into(),
         target: env!("FPL_TARGET").into(),
         current: env!("CARGO_PKG_VERSION").into(),

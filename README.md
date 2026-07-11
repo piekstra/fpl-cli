@@ -153,13 +153,14 @@ always JSON.
 ### Updating
 
 ```sh
-fpl update --check    # is a newer release available?
-fpl update            # download the latest release for your platform and replace the binary
+fpl self-update --check    # is a newer release available?
+fpl self-update            # download the latest release for your platform and replace the binary
 ```
 
-`fpl update` pulls the matching `fpl-<target>.tar.gz` from this repo's GitHub
-Releases and swaps the running binary in place. (If you installed with
-`cargo install`, `git pull && make install` also works.)
+`fpl self-update` pulls the matching `fpl-<target>.tar.gz` from this repo's
+GitHub Releases and swaps the running binary in place. (`fpl update` still works
+as an alias. If you installed with `cargo install`, `git pull && make install`
+also works.)
 
 ## Output & scripting
 

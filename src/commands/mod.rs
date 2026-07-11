@@ -63,7 +63,7 @@ pub fn info(_ctx: &Ctx) -> Result<(), AppError> {
     let info = CliInfo::new(
         "fpl",
         env!("CARGO_PKG_VERSION"),
-        "https://github.com/piekstra/fpl",
+        "https://github.com/piekstra/fpl-cli",
         AuthInfo {
             required: true,
             method: "password".into(),
