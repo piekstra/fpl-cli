@@ -11,92 +11,26 @@
 //! purpose-built renderer next to the generic one. For the raw structure, use
 //! `fpl api`.
 
+use pk_cli_core::output::scalar;
 use serde_json::Value;
 
 use crate::client::AccountSummary;
 
-/// Pretty JSON on stdout. Control-plane only.
-pub fn json(v: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
-    );
+pub use pk_cli_core::output::{fail, json};
+
+/// With `--json`, emit the raw payload; otherwise run the text renderer.
+pub fn emit(json_mode: bool, v: &Value, text: impl FnOnce(&Value)) {
+    if json_mode {
+        json(v);
+    } else {
+        text(v);
+    }
 }
 
 /// Default text renderer for a resource read. Unwraps FPL's `{data: …}`
-/// envelope, then renders an object as a key/value block or an array as a
-/// pipe-delimited table.
+/// envelope, then hands off to the shared renderer.
 pub fn render(v: &Value) {
-    let body = v.get("data").unwrap_or(v);
-    match body {
-        Value::Array(arr) => render_table(arr),
-        Value::Object(_) => render_kv(body, 0),
-        Value::Null => println!("(no data)"),
-        other => println!("{}", scalar(other)),
-    }
-}
-
-fn render_kv(obj: &Value, indent: usize) {
-    let pad = " ".repeat(indent);
-    if let Some(map) = obj.as_object() {
-        for (k, val) in map {
-            match val {
-                Value::Object(_) => {
-                    println!("{pad}{k}:");
-                    render_kv(val, indent + 2);
-                }
-                Value::Array(arr) if arr.iter().all(|x| !x.is_object() && !x.is_array()) => {
-                    let joined = arr.iter().map(scalar).collect::<Vec<_>>().join(", ");
-                    println!("{pad}{k}: {joined}");
-                }
-                Value::Array(arr) => {
-                    println!("{pad}{k}: [{} items]", arr.len());
-                    render_table(arr);
-                }
-                other => println!("{pad}{k}: {}", scalar(other)),
-            }
-        }
-    }
-}
-
-/// Render an array of objects as a pipe-delimited table with `ALL_CAPS`
-/// headers. Falls back to one value per line for arrays of scalars.
-fn render_table(arr: &[Value]) {
-    if arr.is_empty() {
-        println!("(none)");
-        return;
-    }
-    if arr.iter().all(|x| !x.is_object()) {
-        for x in arr {
-            println!("{}", scalar(x));
-        }
-        return;
-    }
-    // Column order = union of keys, first-seen order.
-    let mut cols: Vec<String> = Vec::new();
-    for row in arr {
-        if let Some(map) = row.as_object() {
-            for k in map.keys() {
-                if !cols.iter().any(|c| c == k) {
-                    cols.push(k.clone());
-                }
-            }
-        }
-    }
-    println!(
-        "{}",
-        cols.iter()
-            .map(|c| c.to_uppercase())
-            .collect::<Vec<_>>()
-            .join(" | ")
-    );
-    for row in arr {
-        let cells: Vec<String> = cols
-            .iter()
-            .map(|c| row.get(c).map(scalar).unwrap_or_default())
-            .collect();
-        println!("{}", cells.join(" | "));
-    }
+    pk_cli_core::output::render(v.get("data").unwrap_or(v));
 }
 
 pub fn accounts(list: &[AccountSummary]) {
@@ -230,14 +164,6 @@ pub fn balance(v: &Value) {
     }
     if !printed {
         render(v);
-    }
-}
-
-fn scalar(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Null => String::new(),
-        other => other.to_string(),
     }
 }
 
@@ -513,15 +439,3 @@ pub fn payments_list(v: &Value) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn scalar_unwraps_strings() {
-        assert_eq!(scalar(&json!("hi")), "hi");
-        assert_eq!(scalar(&json!(3)), "3");
-        assert_eq!(scalar(&Value::Null), "");
-    }
-}

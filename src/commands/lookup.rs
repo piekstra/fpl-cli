@@ -11,6 +11,6 @@ pub fn run(ctx: &Ctx, cmd: &LookupCommand) -> Result<(), AppError> {
         LookupCommand::Cities => fpl.cities()?,
         LookupCommand::Zips => fpl.zips()?,
     };
-    output::render(&v);
+    output::emit(ctx.cli.json, &v, output::render);
     Ok(())
 }

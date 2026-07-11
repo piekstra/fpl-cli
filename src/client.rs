@@ -163,7 +163,7 @@ impl Fpl {
             return Err(AppError::NotFound(format!("{path} (HTTP 404)")));
         }
         if !status.is_success() {
-            return Err(AppError::Network(format!(
+            return Err(AppError::Upstream(format!(
                 "FPL HTTP {} for {path}{}",
                 status.as_u16(),
                 body_hint(&text)
@@ -555,7 +555,7 @@ pub fn county_outages() -> Result<Value, AppError> {
     let client = build_client()?;
     let resp = client.get(OUTAGE_COUNTY_URL).send()?;
     if !resp.status().is_success() {
-        return Err(AppError::Network(format!(
+        return Err(AppError::Upstream(format!(
             "outage feed HTTP {}",
             resp.status().as_u16()
         )));

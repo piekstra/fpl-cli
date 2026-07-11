@@ -36,7 +36,7 @@ pub fn run(ctx: &Ctx, args: &InitArgs) -> Result<(), AppError> {
     }
 
     let store = CredentialStore::new(SERVICE);
-    if !args.overwrite && store.get(&username)?.is_some() {
+    if !args.overwrite && crate::commands::get_credential_migrating(&username)?.is_some() {
         return Err(AppError::Usage(format!(
             "a password for {username:?} is already stored — pass --overwrite to replace it"
         )));
@@ -66,7 +66,7 @@ pub fn run(ctx: &Ctx, args: &InitArgs) -> Result<(), AppError> {
             None => eprintln!("stored credentials for {username}"),
         }
     }
-    if args.json {
+    if args.json || ctx.cli.json {
         output::json(&json!({
             "status": "ok",
             "username": username,

@@ -27,8 +27,53 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::secrets::CredentialStore;
 
-/// Keychain service name. One password entry per FPL username.
-pub const SERVICE: &str = "fpl-cli";
+/// Family keychain service name (SPEC v1: `piekstra.<bin>`).
+pub const SERVICE: &str = "piekstra.fpl";
+/// Pre-cli-common service name; entries are migrated on first read.
+const LEGACY_SERVICE: &str = "fpl-cli";
+
+/// Read a stored password, transparently migrating a legacy-service entry to
+/// the family service name on first use.
+pub fn get_credential_migrating(
+    username: &str,
+) -> Result<Option<crate::secrets::Secret>, AppError> {
+    let store = CredentialStore::new(SERVICE);
+    if let Some(s) = store.get(username)? {
+        return Ok(Some(s));
+    }
+    let legacy = CredentialStore::new(LEGACY_SERVICE);
+    if let Some(s) = legacy.get(username)? {
+        store.set(username, &s)?;
+        let _ = legacy.delete(username);
+        return Ok(Some(s));
+    }
+    Ok(None)
+}
+
+/// Delete a stored password from both the family and legacy service names.
+pub fn delete_credential(username: &str) -> Result<bool, AppError> {
+    let a = CredentialStore::new(SERVICE).delete(username)?;
+    let b = CredentialStore::new(LEGACY_SERVICE).delete(username)?;
+    Ok(a || b)
+}
+
+/// `fpl info` — cli-info/v1 capability discovery.
+pub fn info(_ctx: &Ctx) -> Result<(), AppError> {
+    use pk_cli_core::info::{AuthInfo, CliInfo};
+    let info = CliInfo::new(
+        "fpl",
+        env!("CARGO_PKG_VERSION"),
+        "https://github.com/piekstra/fpl",
+        AuthInfo {
+            required: true,
+            method: "password".into(),
+            login_hint: Some("fpl auth login".into()),
+        },
+        &["accounts", "bills", "payments", "usage", "history", "outages", "lookup", "api"],
+    );
+    crate::output::json(&serde_json::to_value(&info).unwrap_or_default());
+    Ok(())
+}
 
 /// Per-invocation context threaded to every command handler.
 pub struct Ctx<'a> {
@@ -54,8 +99,7 @@ impl Ctx<'_> {
     /// keychain; `fpl init` / `fpl set-credential` are how they get there.
     pub fn connect(&self) -> Result<Fpl, AppError> {
         let username = self.resolve_username()?;
-        let store = CredentialStore::new(SERVICE);
-        let secret = store.get(&username)?.ok_or_else(|| {
+        let secret = get_credential_migrating(&username)?.ok_or_else(|| {
             AppError::Auth(format!(
                 "no stored password for {username:?} — run `fpl init` or \
                  `fpl set-credential --stdin`"

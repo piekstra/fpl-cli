@@ -33,7 +33,7 @@ pub fn run(ctx: &Ctx, args: &SetCredentialArgs) -> Result<(), AppError> {
     }
 
     let store = CredentialStore::new(SERVICE);
-    let existed = store.get(&username)?.is_some();
+    let existed = crate::commands::get_credential_migrating(&username)?.is_some();
     if existed && !args.overwrite {
         return Err(AppError::Usage(format!(
             "a credential for {username:?} already exists — pass --overwrite to replace it"
@@ -51,7 +51,7 @@ pub fn run(ctx: &Ctx, args: &SetCredentialArgs) -> Result<(), AppError> {
     if !ctx.cli.quiet {
         eprintln!("stored password for {username} in the keychain");
     }
-    if args.json {
+    if args.json || ctx.cli.json {
         output::json(&json!({
             "status": "stored",
             "key": "password",

@@ -16,11 +16,11 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
     match cmd {
         PaymentsCommand::List { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::payments_list(&fpl.account_history(&account)?);
+            output::emit(ctx.cli.json, &fpl.account_history(&account)?, output::payments_list);
         }
         PaymentsCommand::Methods { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::render(&fpl.payment_options(&account)?);
+            output::emit(ctx.cli.json, &fpl.payment_options(&account)?, output::render);
         }
         PaymentsCommand::Create {
             amount,
@@ -30,13 +30,17 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
             force,
         } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            let pay_date = date
-                .clone()
-                .unwrap_or_else(|| crate::dates::fmt_mm_dd_yyyy(crate::dates::today()));
+            // Accept ISO YYYY-MM-DD (the family convention) or FPL's MM-DD-YYYY.
+            let pay_date = match date {
+                Some(d) => crate::dates::parse_iso(d)
+                    .map(crate::dates::fmt_mm_dd_yyyy)
+                    .unwrap_or_else(|_| d.clone()),
+                None => crate::dates::fmt_mm_dd_yyyy(crate::dates::today()),
+            };
 
             if !force {
                 if !stdin_is_tty() {
-                    return Err(AppError::Usage(
+                    return Err(AppError::ConfirmationRequired(
                         "stdin is not a TTY — pass --force to submit the payment \
                          non-interactively"
                             .into(),
@@ -58,7 +62,7 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
             if let Some(m) = method {
                 body["paymentMethod"] = Value::String(m.clone());
             }
-            output::render(&fpl.make_payment(&account, &body)?);
+            output::emit(ctx.cli.json, &fpl.make_payment(&account, &body)?, output::render);
         }
     }
     Ok(())

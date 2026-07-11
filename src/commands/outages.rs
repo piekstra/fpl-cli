@@ -5,11 +5,11 @@ use crate::commands::Ctx;
 use crate::error::AppError;
 use crate::{client, output};
 
-pub fn run(_ctx: &Ctx, cmd: &OutagesCommand) -> Result<(), AppError> {
+pub fn run(ctx: &Ctx, cmd: &OutagesCommand) -> Result<(), AppError> {
     match cmd {
         OutagesCommand::List { name } => {
             let v = client::county_outages()?;
-            output::outages(&v, name.as_deref());
+            output::emit(ctx.cli.json, &v, |v| output::outages(v, name.as_deref()));
             Ok(())
         }
     }

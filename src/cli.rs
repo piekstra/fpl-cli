@@ -1,4 +1,6 @@
 use clap::{Args, Parser, Subcommand};
+use clap_complete::Shell;
+pub use pk_cli_selfupdate::SelfUpdateArgs;
 
 /// Manage your Florida Power & Light (FPL) account from the command line.
 ///
@@ -13,6 +15,10 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "fpl", version, about, long_about = None)]
 pub struct Cli {
+    /// Emit machine-readable JSON on stdout (diagnostics go to stderr).
+    #[arg(long, global = true)]
+    pub json: bool,
+
     /// Account number to act on. Overrides the active account and $FPL_ACCOUNT.
     #[arg(short = 'a', long, global = true, env = "FPL_ACCOUNT")]
     pub account: Option<String>,
@@ -107,17 +113,18 @@ pub enum Command {
     Api(ApiArgs),
 
     /// Update `fpl` to the latest release from GitHub.
-    Update(UpdateArgs),
-}
+    #[command(name = "self-update", alias = "update")]
+    SelfUpdate(SelfUpdateArgs),
 
-#[derive(Args, Debug)]
-pub struct UpdateArgs {
-    /// Only report whether a newer version is available; don't install.
-    #[arg(long)]
-    pub check: bool,
-    /// Emit the result as JSON.
-    #[arg(long)]
-    pub json: bool,
+    /// Print a shell completion script (e.g. `fpl completions zsh`).
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Machine-readable capability discovery (cli-info/v1).
+    Info,
 }
 
 #[derive(Args, Debug)]
@@ -160,6 +167,10 @@ pub struct SetCredentialArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum AuthCommand {
+    /// Verify credentials and store them in the keychain (same as `fpl init`).
+    Login(InitArgs),
+    /// Write a single credential to the keychain (rotation / headless setup).
+    SetCredential(SetCredentialArgs),
     /// Show configured username, active account, and keychain state.
     Status {
         /// Emit as JSON.

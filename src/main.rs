@@ -16,12 +16,9 @@ use error::AppError;
 
 fn main() {
     let cli = Cli::parse();
-    let quiet = cli.quiet;
+    let json_mode = cli.json;
     if let Err(e) = run(cli) {
-        if !quiet {
-            eprintln!("error: {e}");
-        }
-        std::process::exit(e.exit_code());
+        std::process::exit(output::fail(&e, json_mode));
     }
 }
 
@@ -46,6 +43,12 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Lookup(cmd) => commands::lookup::run(&ctx, cmd),
         Command::Outages(cmd) => commands::outages::run(&ctx, cmd),
         Command::Api(args) => commands::api::run(&ctx, args),
-        Command::Update(args) => commands::update::run(&ctx, args),
+        Command::SelfUpdate(args) => commands::update::run(&ctx, args),
+        Command::Completions { shell } => {
+            use clap::CommandFactory;
+            clap_complete::generate(*shell, &mut Cli::command(), "fpl", &mut std::io::stdout());
+            Ok(())
+        }
+        Command::Info => commands::info(&ctx),
     }
 }
