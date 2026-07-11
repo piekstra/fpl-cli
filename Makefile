@@ -52,3 +52,11 @@ audit:
 # Aggregate pre-push gate: a green run here predicts green CI.
 verify: fmt-check lint test smoke
 	@echo "verify ok"
+
+# Debug build re-signed with the stable pk-cli-codesign identity so macOS
+# keychain "Always Allow" grants survive rebuilds (see cli-common/scripts).
+dev:
+	cargo build
+	@if [ -x "$$HOME/Dev/cli-common/scripts/dev-sign.sh" ]; then \
+		"$$HOME/Dev/cli-common/scripts/dev-sign.sh" target/debug/fpl; \
+	else echo "cli-common/scripts/dev-sign.sh not found — binary left ad-hoc signed"; fi

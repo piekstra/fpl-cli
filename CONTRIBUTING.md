@@ -49,3 +49,19 @@ Use the PR template and fill in the checklist. A maintainer (see
 ## License of contributions
 
 By contributing, you agree your work is dual-licensed under **MIT OR Apache-2.0**.
+
+## The CLI family & cli-common
+
+This repo is part of a family of CLIs (fpl, xfin, lrfl, tojfl, …) that share a
+surface spec and library crates: [piekstra/cli-common](https://github.com/piekstra/cli-common)
+(**piekstra-cli/1**). Before adding anything reusable — output rendering,
+secret handling, config storage, self-update, DTO shapes — check whether it
+belongs in cli-common's `pk-cli-*` crates instead. Contributions of shared,
+reusable pieces to cli-common are encouraged and preferred over per-repo
+copies; consume them here as tag-pinned git dependencies.
+
+Surface changes (new standard commands/flags, DTO fields, exit codes) start as
+a spec change in cli-common's `DESIGN.md`.
+
+On macOS, run cli-common's `scripts/setup-dev-signing.sh` once and build with
+`make dev` so keychain "Always Allow" grants survive rebuilds.
