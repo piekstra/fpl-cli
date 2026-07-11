@@ -197,38 +197,54 @@ fn cell(v: Option<&Value>) -> String {
 
 // ---- billing presenters ---------------------------------------------------
 
+/// Print `lines`, or fall back to the generic renderer when there is nothing
+/// tailored to show. The presenters below split into a `pub fn` (this + print)
+/// and a pure `fmt_*` core that returns the lines, so the cores are unit-tested.
+fn emit_lines(v: &Value, lines: Option<Vec<String>>) {
+    match lines {
+        Some(lines) => {
+            for l in lines {
+                println!("{l}");
+            }
+        }
+        None => render(v),
+    }
+}
+
 /// Prior bills as a clean table (bill-history nests rows under `data.data`).
 pub fn bills_list(v: &Value) {
+    emit_lines(v, fmt_bills_list(v));
+}
+
+fn fmt_bills_list(v: &Value) -> Option<Vec<String>> {
     let rows = v
         .pointer("/data/data")
         .or_else(|| v.get("data"))
-        .and_then(|x| x.as_array());
-    match rows {
-        Some(rows) if !rows.is_empty() => {
-            println!("BILL DATE | AMOUNT | DUE | KWH | DAYS");
-            for r in rows {
-                println!(
-                    "{} | {} | {} | {} | {}",
-                    short_date(r.get("dateBilled")),
-                    money(r.get("totalBillAmount")),
-                    short_date(r.get("dueDate")),
-                    cell(r.get("consumptionUnit")),
-                    cell(r.get("daysBilled")),
-                );
-            }
-        }
-        _ => render(v),
+        .and_then(|x| x.as_array())
+        .filter(|r| !r.is_empty())?;
+    let mut out = vec!["BILL DATE | AMOUNT | DUE | KWH | DAYS".to_string()];
+    for r in rows {
+        out.push(format!(
+            "{} | {} | {} | {} | {}",
+            short_date(r.get("dateBilled")),
+            money(r.get("totalBillAmount")),
+            short_date(r.get("dueDate")),
+            cell(r.get("consumptionUnit")),
+            cell(r.get("daysBilled")),
+        ));
     }
+    Some(out)
 }
 
 /// Current-period bill projection (mobile-energy-service `CurrentUsage`, or the
 /// dedicated projected-bill payload — both carry the same fields under `data`).
 pub fn bill_summary(v: &Value) {
-    let node = v.pointer("/data/CurrentUsage").or_else(|| v.get("data"));
-    let Some(node) = node else {
-        return render(v);
-    };
-    let mut any = false;
+    emit_lines(v, fmt_bill_summary(v));
+}
+
+fn fmt_bill_summary(v: &Value) -> Option<Vec<String>> {
+    let node = v.pointer("/data/CurrentUsage").or_else(|| v.get("data"))?;
+    let mut out = Vec::new();
     for (label, key, is_money) in [
         ("Projected bill", "projectedBill", true),
         ("Bill to date", "billToDate", true),
@@ -245,67 +261,70 @@ pub fn bill_summary(v: &Value) {
                 scalar(val)
             };
             if !s.is_empty() {
-                println!("{label:<16}{s}");
-                any = true;
+                out.push(format!("{label:<16}{s}"));
             }
         }
     }
     let (start, end) = (node.get("billStartDate"), node.get("billEndDate"));
     if start.is_some() && end.is_some() {
-        println!(
+        out.push(format!(
             "{:<16}{} to {}",
             "Cycle",
             short_date(start),
             short_date(end)
-        );
+        ));
     }
-    if !any {
-        render(v);
-    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// Budget Billing plan status + the monthly graph.
 pub fn budget(v: &Value) {
-    let Some(d) = v.get("data") else {
-        return render(v);
-    };
+    emit_lines(v, fmt_budget(v));
+}
+
+fn fmt_budget(v: &Value) -> Option<Vec<String>> {
+    let d = v.get("data")?;
     let yesno = |k: &str| match d.get(k).and_then(|x| x.as_bool()) {
         Some(true) => "yes",
         Some(false) => "no",
         None => "—",
     };
-    println!("Enrolled:        {}", yesno("enrolled"));
-    println!("Eligible:        {}", yesno("eligibleForBudgetBilling"));
-    println!("Budget amount:   {}", money(d.get("bbAmt")));
-    println!("Actual this bill:{}", money(d.get("eleAmt")));
-    println!("Deferred balance:{}", money(d.get("defAmt")));
+    let mut out = vec![
+        format!("Enrolled:        {}", yesno("enrolled")),
+        format!("Eligible:        {}", yesno("eligibleForBudgetBilling")),
+        format!("Budget amount:   {}", money(d.get("bbAmt"))),
+        format!("Actual this bill:{}", money(d.get("eleAmt"))),
+        format!("Deferred balance:{}", money(d.get("defAmt"))),
+    ];
     if let Some(rows) = d.get("graphData").and_then(|x| x.as_array()) {
         if !rows.is_empty() {
-            println!();
-            println!("MONTH | ACTUAL | BUDGET | DEFERRED");
+            out.push(String::new());
+            out.push("MONTH | ACTUAL | BUDGET | DEFERRED".to_string());
             for r in rows {
                 let m = format!("{} {}", cell(r.get("month")), cell(r.get("year")));
-                println!(
+                out.push(format!(
                     "{} | {} | {} | {}",
                     m.trim(),
                     money(r.get("actuallBillAmt")),
                     money(r.get("budgetBillAmt")),
                     money(r.get("deferredBalAmt")),
-                );
+                ));
             }
         }
     }
+    Some(out)
 }
 
 // ---- usage presenters -----------------------------------------------------
 
 /// Current-period energy summary (kWh angle).
 pub fn usage_summary(v: &Value) {
-    let node = v.pointer("/data/CurrentUsage").or_else(|| v.get("data"));
-    let Some(node) = node else {
-        return render(v);
-    };
-    let mut any = false;
+    emit_lines(v, fmt_usage_summary(v));
+}
+
+fn fmt_usage_summary(v: &Value) -> Option<Vec<String>> {
+    let node = v.pointer("/data/CurrentUsage").or_else(|| v.get("data"))?;
+    let mut out = Vec::new();
     for (label, key) in [
         ("Projected kWh", "projectedKWH"),
         ("kWh to date", "billToDateKWH"),
@@ -317,139 +336,269 @@ pub fn usage_summary(v: &Value) {
         if let Some(val) = node.get(key).filter(|x| !x.is_null()) {
             let s = scalar(val);
             if !s.is_empty() {
-                println!("{label:<16}{s}");
-                any = true;
+                out.push(format!("{label:<16}{s}"));
             }
         }
     }
-    if !any {
-        render(v);
-    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// Hourly usage for a day as a table, with daily totals.
 pub fn hourly(v: &Value) {
+    emit_lines(v, fmt_hourly(v));
+}
+
+fn fmt_hourly(v: &Value) -> Option<Vec<String>> {
     let rows = v
         .pointer("/data/HourlyUsage/data")
-        .and_then(|x| x.as_array());
-    match rows {
-        Some(rows) if !rows.is_empty() => {
-            println!("HOUR | KWH | COST | TEMP");
-            let mut kwh = 0.0;
-            let mut cost = 0.0;
-            for r in rows {
-                kwh += r.get("kwhActual").and_then(|x| x.as_f64()).unwrap_or(0.0);
-                cost += r
-                    .get("billingCharged")
-                    .and_then(|x| x.as_f64())
-                    .unwrap_or(0.0);
-                println!(
-                    "{} | {} | {} | {}",
-                    cell(r.get("hour")),
-                    cell(r.get("kwhActual")),
-                    money(r.get("billingCharged")),
-                    cell(r.get("temperature")),
-                );
-            }
-            println!("TOTAL | {kwh:.1} | ${cost:.2} |");
-        }
-        _ => render(v),
+        .and_then(|x| x.as_array())
+        .filter(|r| !r.is_empty())?;
+    let mut out = vec!["HOUR | KWH | COST | TEMP".to_string()];
+    let mut kwh = 0.0;
+    let mut cost = 0.0;
+    for r in rows {
+        kwh += r.get("kwhActual").and_then(|x| x.as_f64()).unwrap_or(0.0);
+        cost += r
+            .get("billingCharged")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        out.push(format!(
+            "{} | {} | {} | {}",
+            cell(r.get("hour")),
+            cell(r.get("kwhActual")),
+            money(r.get("billingCharged")),
+            cell(r.get("temperature")),
+        ));
     }
+    out.push(format!("TOTAL | {kwh:.1} | ${cost:.2} |"));
+    Some(out)
 }
 
 /// Appliance-level breakdown for the most recent bill period.
 pub fn appliances(v: &Value) {
-    let periods = v.pointer("/data/billPeriods").and_then(|x| x.as_array());
-    let latest = periods.and_then(|ps| {
-        ps.iter()
-            .find(|p| {
-                p.get("billPeriod")
-                    .map(|b| scalar(b) == "1")
-                    .unwrap_or(false)
-            })
-            .or_else(|| ps.first())
-    });
-    let Some(p) = latest else {
-        return render(v);
-    };
-    println!(
+    emit_lines(v, fmt_appliances(v));
+}
+
+fn fmt_appliances(v: &Value) -> Option<Vec<String>> {
+    let p = v
+        .pointer("/data/billPeriods")
+        .and_then(|x| x.as_array())
+        .and_then(|ps| {
+            ps.iter()
+                .find(|p| {
+                    p.get("billPeriod")
+                        .map(|b| scalar(b) == "1")
+                        .unwrap_or(false)
+                })
+                .or_else(|| ps.first())
+        })?;
+    let mut out = vec![format!(
         "Period:  {} to {}   ({} kWh, {})",
         short_date(p.get("startDate")),
         short_date(p.get("endDate")),
         cell(p.get("kwh")),
         money(p.get("dollars")),
-    );
+    )];
     if let Some(cats) = p.get("categories").and_then(|x| x.as_array()) {
-        println!();
-        println!("CATEGORY | KWH | COST | %");
+        out.push(String::new());
+        out.push("CATEGORY | KWH | COST | %".to_string());
         for c in cats {
-            println!(
+            out.push(format!(
                 "{} | {} | {} | {}",
                 cell(c.get("category")),
                 cell(c.get("kwh")),
                 money(c.get("cost")),
                 cell(c.get("percentage")),
-            );
+            ));
         }
     }
+    Some(out)
 }
 
 // ---- ledger presenters ----------------------------------------------------
 
 /// Account ledger (charges + payments + adjustments) as a table.
 pub fn ledger(v: &Value) {
-    let rows = v.get("data").and_then(|x| x.as_array());
-    match rows {
-        Some(rows) if !rows.is_empty() => {
-            println!("DATE | TYPE | AMOUNT | KWH | BALANCE");
-            for r in rows {
-                println!(
-                    "{} | {} | {} | {} | {}",
-                    short_date(r.get("debitCreditTransactionDate")),
-                    cell(r.get("debitCreditDescriptionCode")),
-                    money(r.get("debitCreditAmount")),
-                    cell(r.get("kwh")),
-                    money(r.get("balanceAmount")),
-                );
-            }
-        }
-        _ => render(v),
+    emit_lines(v, fmt_ledger(v));
+}
+
+fn fmt_ledger(v: &Value) -> Option<Vec<String>> {
+    let rows = v
+        .get("data")
+        .and_then(|x| x.as_array())
+        .filter(|r| !r.is_empty())?;
+    let mut out = vec!["DATE | TYPE | AMOUNT | KWH | BALANCE".to_string()];
+    for r in rows {
+        out.push(format!(
+            "{} | {} | {} | {} | {}",
+            short_date(r.get("debitCreditTransactionDate")),
+            cell(r.get("debitCreditDescriptionCode")),
+            money(r.get("debitCreditAmount")),
+            cell(r.get("kwh")),
+            money(r.get("balanceAmount")),
+        ));
     }
+    Some(out)
 }
 
 /// Payments only, filtered out of the account ledger.
 pub fn payments_list(v: &Value) {
-    let rows = v.get("data").and_then(|x| x.as_array());
-    match rows {
-        Some(rows) => {
-            let pmts: Vec<&Value> = rows
-                .iter()
-                .filter(|r| {
-                    r.get("debitCreditDescriptionCode")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c.eq_ignore_ascii_case("PYMT"))
-                        .unwrap_or(false)
-                })
-                .collect();
-            if pmts.is_empty() {
-                println!("(no payments in the recent ledger)");
-                return;
-            }
-            println!("DATE | AMOUNT");
-            for r in pmts {
-                // Payments are credits (negative in the ledger); show the magnitude.
-                let amt = r
-                    .get("debitCreditAmount")
-                    .and_then(|x| x.as_f64())
-                    .map(|n| format!("${:.2}", n.abs()))
-                    .unwrap_or_default();
-                println!(
-                    "{} | {}",
-                    short_date(r.get("debitCreditTransactionDate")),
-                    amt
-                );
-            }
-        }
-        _ => render(v),
+    emit_lines(v, fmt_payments_list(v));
+}
+
+fn fmt_payments_list(v: &Value) -> Option<Vec<String>> {
+    let rows = v.get("data").and_then(|x| x.as_array())?;
+    let pmts: Vec<&Value> = rows
+        .iter()
+        .filter(|r| {
+            r.get("debitCreditDescriptionCode")
+                .and_then(|c| c.as_str())
+                .map(|c| c.eq_ignore_ascii_case("PYMT"))
+                .unwrap_or(false)
+        })
+        .collect();
+    if pmts.is_empty() {
+        return Some(vec!["(no payments in the recent ledger)".to_string()]);
+    }
+    let mut out = vec!["DATE | AMOUNT".to_string()];
+    for r in pmts {
+        // Payments are credits (negative in the ledger); show the magnitude.
+        let amt = r
+            .get("debitCreditAmount")
+            .and_then(|x| x.as_f64())
+            .map(|n| format!("${:.2}", n.abs()))
+            .unwrap_or_default();
+        out.push(format!(
+            "{} | {}",
+            short_date(r.get("debitCreditTransactionDate")),
+            amt
+        ));
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn money_formats() {
+        assert_eq!(money(Some(&json!(196.16))), "$196.16");
+        assert_eq!(money(Some(&json!(0))), "$0.00");
+        assert_eq!(money(Some(&json!("$12.00"))), "$12.00");
+        assert_eq!(money(Some(&json!("12"))), "$12");
+        assert_eq!(money(None), "");
+        assert_eq!(money(Some(&Value::Null)), "");
+    }
+
+    #[test]
+    fn short_date_truncates_to_ymd() {
+        assert_eq!(
+            short_date(Some(&json!("2026-06-26T00:00:00.000Z"))),
+            "2026-06-26"
+        );
+        assert_eq!(short_date(Some(&json!("2026-07-17"))), "2026-07-17");
+        assert_eq!(short_date(None), "");
+    }
+
+    #[test]
+    fn bills_list_renders_rows_and_falls_back_when_empty() {
+        let v = json!({"data":{"data":[
+            {"dateBilled":"2026-06-26","totalBillAmount":196.16,"dueDate":"2026-07-17",
+             "consumptionUnit":1246,"daysBilled":30}
+        ]}});
+        let out = fmt_bills_list(&v).unwrap();
+        assert_eq!(out[0], "BILL DATE | AMOUNT | DUE | KWH | DAYS");
+        assert_eq!(out[1], "2026-06-26 | $196.16 | 2026-07-17 | 1246 | 30");
+        assert!(fmt_bills_list(&json!({"data":{"data":[]}})).is_none());
+        assert!(fmt_bills_list(&json!({})).is_none());
+    }
+
+    #[test]
+    fn bill_summary_from_current_usage() {
+        let v = json!({"data":{"CurrentUsage":{
+            "projectedBill":128.0,"billToDate":83.88,"dailyAvg":5.99,
+            "asOfDays":14,"avgHighTemp":96.0,
+            "billStartDate":"2026-06-26","billEndDate":"2026-07-28"
+        }}});
+        let out = fmt_bill_summary(&v).unwrap();
+        assert!(out.contains(&"Projected bill  $128.00".to_string()));
+        assert!(out.contains(&"Bill to date    $83.88".to_string()));
+        assert!(out.iter().any(|l| l.contains("2026-06-26 to 2026-07-28")));
+        assert!(fmt_bill_summary(&json!({"other":1})).is_none());
+    }
+
+    #[test]
+    fn budget_status_and_graph() {
+        let v = json!({"data":{
+            "enrolled":false,"eligibleForBudgetBilling":false,
+            "bbAmt":132.49,"eleAmt":196.16,"defAmt":63.67,
+            "graphData":[{"month":"Jun","year":2026,"actuallBillAmt":196.16,
+                          "budgetBillAmt":132.49,"deferredBalAmt":63.67}]
+        }});
+        let out = fmt_budget(&v).unwrap();
+        assert_eq!(out[0], "Enrolled:        no");
+        assert!(out.contains(&"Budget amount:   $132.49".to_string()));
+        assert!(out.contains(&"MONTH | ACTUAL | BUDGET | DEFERRED".to_string()));
+        assert!(out.contains(&"Jun 2026 | $196.16 | $132.49 | $63.67".to_string()));
+    }
+
+    #[test]
+    fn hourly_table_totals() {
+        let v = json!({"data":{"HourlyUsage":{"data":[
+            {"hour":1,"kwhActual":1.45,"billingCharged":0.21,"temperature":85.0},
+            {"hour":2,"kwhActual":1.71,"billingCharged":0.24,"temperature":85.0}
+        ]}}});
+        let out = fmt_hourly(&v).unwrap();
+        assert_eq!(out[0], "HOUR | KWH | COST | TEMP");
+        assert_eq!(out[1], "1 | 1.45 | $0.21 | 85.0");
+        assert_eq!(out.last().unwrap(), "TOTAL | 3.2 | $0.45 |");
+    }
+
+    #[test]
+    fn appliances_picks_latest_period() {
+        let v = json!({"data":{"billPeriods":[
+            {"billPeriod":"2","startDate":"2026-04-27","endDate":"2026-05-28","kwh":1420,
+             "dollars":225.29,"categories":[]},
+            {"billPeriod":"1","startDate":"2026-05-28","endDate":"2026-06-26","kwh":1246,
+             "dollars":196.16,"categories":[
+                {"category":"cooling","kwh":593.0,"cost":93.4,"percentage":48.0}
+             ]}
+        ]}});
+        let out = fmt_appliances(&v).unwrap();
+        assert!(out[0].contains("Period:  2026-05-28 to 2026-06-26"));
+        assert!(out[0].contains("1246 kWh, $196.16"));
+        assert!(out.contains(&"cooling | 593.0 | $93.40 | 48.0".to_string()));
+    }
+
+    #[test]
+    fn ledger_table() {
+        let v = json!({"data":[
+            {"debitCreditTransactionDate":"2026-07-07T04:00:00.000Z",
+             "debitCreditDescriptionCode":"PYMT","debitCreditAmount":-196.16,
+             "kwh":0,"balanceAmount":0.0}
+        ]});
+        let out = fmt_ledger(&v).unwrap();
+        assert_eq!(out[0], "DATE | TYPE | AMOUNT | KWH | BALANCE");
+        assert_eq!(out[1], "2026-07-07 | PYMT | $-196.16 | 0 | $0.00");
+    }
+
+    #[test]
+    fn payments_list_filters_to_pymt_and_shows_magnitude() {
+        let v = json!({"data":[
+            {"debitCreditTransactionDate":"2026-07-07T04:00:00.000Z",
+             "debitCreditDescriptionCode":"PYMT","debitCreditAmount":-196.16},
+            {"debitCreditTransactionDate":"2026-06-26T04:00:00.000Z",
+             "debitCreditDescriptionCode":"ELEC","debitCreditAmount":196.16}
+        ]});
+        let out = fmt_payments_list(&v).unwrap();
+        assert_eq!(out, vec!["DATE | AMOUNT", "2026-07-07 | $196.16"]);
+
+        let none = json!({"data":[{"debitCreditDescriptionCode":"ELEC","debitCreditAmount":10.0}]});
+        assert_eq!(
+            fmt_payments_list(&none).unwrap(),
+            vec!["(no payments in the recent ledger)"]
+        );
     }
 }
