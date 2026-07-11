@@ -16,7 +16,7 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
     match cmd {
         PaymentsCommand::List { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::render(&fpl.account_history(&account)?);
+            output::payments_list(&fpl.account_history(&account)?);
         }
         PaymentsCommand::Methods { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;

@@ -10,21 +10,21 @@ pub fn run(ctx: &Ctx, cmd: &BillsCommand) -> Result<(), AppError> {
     match cmd {
         BillsCommand::List { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::render(&fpl.bill_history(&account)?);
+            output::bills_list(&fpl.bill_history(&account)?);
         }
         BillsCommand::Get { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
             let c = account_ctx(&fpl, &account)?;
-            output::render(&fpl.energy_usage(&account, &c.premise, &c.last_billed, &c.meter)?);
+            output::bill_summary(&fpl.energy_usage(&account, &c.premise, &c.last_billed, &c.meter)?);
         }
         BillsCommand::Projected { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
             let c = account_ctx(&fpl, &account)?;
-            output::render(&fpl.projected_bill(&account, &c.premise, &c.last_billed)?);
+            output::bill_summary(&fpl.projected_bill(&account, &c.premise, &c.last_billed)?);
         }
         BillsCommand::Budget { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::render(&fpl.budget_billing(&account)?);
+            output::budget(&fpl.budget_billing(&account)?);
         }
     }
     Ok(())

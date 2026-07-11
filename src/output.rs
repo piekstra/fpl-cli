@@ -241,6 +241,278 @@ fn scalar(v: &Value) -> String {
     }
 }
 
+// ---- typed cell helpers for the tailored presenters ----------------------
+
+/// Format an optional numeric/string field as `$X.XX`.
+fn money(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::Number(n)) => format!("${:.2}", n.as_f64().unwrap_or(0.0)),
+        Some(Value::String(s)) if !s.is_empty() => {
+            if s.starts_with('$') {
+                s.clone()
+            } else {
+                format!("${s}")
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// The `YYYY-MM-DD` prefix of a date/datetime string.
+fn short_date(v: Option<&Value>) -> String {
+    v.and_then(|x| x.as_str())
+        .map(|s| s.chars().take(10).collect())
+        .unwrap_or_default()
+}
+
+fn cell(v: Option<&Value>) -> String {
+    v.map(scalar).unwrap_or_default()
+}
+
+// ---- billing presenters ---------------------------------------------------
+
+/// Prior bills as a clean table (bill-history nests rows under `data.data`).
+pub fn bills_list(v: &Value) {
+    let rows = v
+        .pointer("/data/data")
+        .or_else(|| v.get("data"))
+        .and_then(|x| x.as_array());
+    match rows {
+        Some(rows) if !rows.is_empty() => {
+            println!("BILL DATE | AMOUNT | DUE | KWH | DAYS");
+            for r in rows {
+                println!(
+                    "{} | {} | {} | {} | {}",
+                    short_date(r.get("dateBilled")),
+                    money(r.get("totalBillAmount")),
+                    short_date(r.get("dueDate")),
+                    cell(r.get("consumptionUnit")),
+                    cell(r.get("daysBilled")),
+                );
+            }
+        }
+        _ => render(v),
+    }
+}
+
+/// Current-period bill projection (mobile-energy-service `CurrentUsage`, or the
+/// dedicated projected-bill payload — both carry the same fields under `data`).
+pub fn bill_summary(v: &Value) {
+    let node = v.pointer("/data/CurrentUsage").or_else(|| v.get("data"));
+    let Some(node) = node else {
+        return render(v);
+    };
+    let mut any = false;
+    for (label, key, is_money) in [
+        ("Projected bill", "projectedBill", true),
+        ("Bill to date", "billToDate", true),
+        ("Daily average", "dailyAvg", true),
+        ("Projected kWh", "projectedKWH", false),
+        ("Days into cycle", "asOfDays", false),
+        ("Service days", "serviceDays", false),
+        ("Avg high temp", "avgHighTemp", false),
+    ] {
+        if let Some(val) = node.get(key).filter(|x| !x.is_null()) {
+            let s = if is_money { money(Some(val)) } else { scalar(val) };
+            if !s.is_empty() {
+                println!("{label:<16}{s}");
+                any = true;
+            }
+        }
+    }
+    let (start, end) = (node.get("billStartDate"), node.get("billEndDate"));
+    if start.is_some() && end.is_some() {
+        println!(
+            "{:<16}{} to {}",
+            "Cycle",
+            short_date(start),
+            short_date(end)
+        );
+    }
+    if !any {
+        render(v);
+    }
+}
+
+/// Budget Billing plan status + the monthly graph.
+pub fn budget(v: &Value) {
+    let Some(d) = v.get("data") else {
+        return render(v);
+    };
+    let yesno = |k: &str| match d.get(k).and_then(|x| x.as_bool()) {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "—",
+    };
+    println!("Enrolled:        {}", yesno("enrolled"));
+    println!("Eligible:        {}", yesno("eligibleForBudgetBilling"));
+    println!("Budget amount:   {}", money(d.get("bbAmt")));
+    println!("Actual this bill:{}", money(d.get("eleAmt")));
+    println!("Deferred balance:{}", money(d.get("defAmt")));
+    if let Some(rows) = d.get("graphData").and_then(|x| x.as_array()) {
+        if !rows.is_empty() {
+            println!();
+            println!("MONTH | ACTUAL | BUDGET | DEFERRED");
+            for r in rows {
+                let m = format!("{} {}", cell(r.get("month")), cell(r.get("year")));
+                println!(
+                    "{} | {} | {} | {}",
+                    m.trim(),
+                    money(r.get("actuallBillAmt")),
+                    money(r.get("budgetBillAmt")),
+                    money(r.get("deferredBalAmt")),
+                );
+            }
+        }
+    }
+}
+
+// ---- usage presenters -----------------------------------------------------
+
+/// Current-period energy summary (kWh angle).
+pub fn usage_summary(v: &Value) {
+    let node = v.pointer("/data/CurrentUsage").or_else(|| v.get("data"));
+    let Some(node) = node else {
+        return render(v);
+    };
+    let mut any = false;
+    for (label, key) in [
+        ("Projected kWh", "projectedKWH"),
+        ("kWh to date", "billToDateKWH"),
+        ("Daily avg kWh", "dailyAverageKWH"),
+        ("Service days", "serviceDays"),
+        ("Days into cycle", "asOfDays"),
+        ("Avg high temp", "avgHighTemp"),
+    ] {
+        if let Some(val) = node.get(key).filter(|x| !x.is_null()) {
+            let s = scalar(val);
+            if !s.is_empty() {
+                println!("{label:<16}{s}");
+                any = true;
+            }
+        }
+    }
+    if !any {
+        render(v);
+    }
+}
+
+/// Hourly usage for a day as a table, with daily totals.
+pub fn hourly(v: &Value) {
+    let rows = v
+        .pointer("/data/HourlyUsage/data")
+        .and_then(|x| x.as_array());
+    match rows {
+        Some(rows) if !rows.is_empty() => {
+            println!("HOUR | KWH | COST | TEMP");
+            let mut kwh = 0.0;
+            let mut cost = 0.0;
+            for r in rows {
+                kwh += r.get("kwhActual").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                cost += r.get("billingCharged").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                println!(
+                    "{} | {} | {} | {}",
+                    cell(r.get("hour")),
+                    cell(r.get("kwhActual")),
+                    money(r.get("billingCharged")),
+                    cell(r.get("temperature")),
+                );
+            }
+            println!("TOTAL | {kwh:.1} | ${cost:.2} |");
+        }
+        _ => render(v),
+    }
+}
+
+/// Appliance-level breakdown for the most recent bill period.
+pub fn appliances(v: &Value) {
+    let periods = v.pointer("/data/billPeriods").and_then(|x| x.as_array());
+    let latest = periods.and_then(|ps| {
+        ps.iter()
+            .find(|p| p.get("billPeriod").map(|b| scalar(b) == "1").unwrap_or(false))
+            .or_else(|| ps.first())
+    });
+    let Some(p) = latest else {
+        return render(v);
+    };
+    println!(
+        "Period:  {} to {}   ({} kWh, {})",
+        short_date(p.get("startDate")),
+        short_date(p.get("endDate")),
+        cell(p.get("kwh")),
+        money(p.get("dollars")),
+    );
+    if let Some(cats) = p.get("categories").and_then(|x| x.as_array()) {
+        println!();
+        println!("CATEGORY | KWH | COST | %");
+        for c in cats {
+            println!(
+                "{} | {} | {} | {}",
+                cell(c.get("category")),
+                cell(c.get("kwh")),
+                money(c.get("cost")),
+                cell(c.get("percentage")),
+            );
+        }
+    }
+}
+
+// ---- ledger presenters ----------------------------------------------------
+
+/// Account ledger (charges + payments + adjustments) as a table.
+pub fn ledger(v: &Value) {
+    let rows = v.get("data").and_then(|x| x.as_array());
+    match rows {
+        Some(rows) if !rows.is_empty() => {
+            println!("DATE | TYPE | AMOUNT | KWH | BALANCE");
+            for r in rows {
+                println!(
+                    "{} | {} | {} | {} | {}",
+                    short_date(r.get("debitCreditTransactionDate")),
+                    cell(r.get("debitCreditDescriptionCode")),
+                    money(r.get("debitCreditAmount")),
+                    cell(r.get("kwh")),
+                    money(r.get("balanceAmount")),
+                );
+            }
+        }
+        _ => render(v),
+    }
+}
+
+/// Payments only, filtered out of the account ledger.
+pub fn payments_list(v: &Value) {
+    let rows = v.get("data").and_then(|x| x.as_array());
+    match rows {
+        Some(rows) => {
+            let pmts: Vec<&Value> = rows
+                .iter()
+                .filter(|r| {
+                    r.get("debitCreditDescriptionCode")
+                        .and_then(|c| c.as_str())
+                        .map(|c| c.eq_ignore_ascii_case("PYMT"))
+                        .unwrap_or(false)
+                })
+                .collect();
+            if pmts.is_empty() {
+                println!("(no payments in the recent ledger)");
+                return;
+            }
+            println!("DATE | AMOUNT");
+            for r in pmts {
+                // Payments are credits (negative in the ledger); show the magnitude.
+                let amt = r
+                    .get("debitCreditAmount")
+                    .and_then(|x| x.as_f64())
+                    .map(|n| format!("${:.2}", n.abs()))
+                    .unwrap_or_default();
+                println!("{} | {}", short_date(r.get("debitCreditTransactionDate")), amt);
+            }
+        }
+        _ => render(v),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
