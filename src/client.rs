@@ -583,4 +583,44 @@ mod tests {
         assert_eq!(Fpl::premise_of(&s).as_deref(), Some("987654321"));
         assert_eq!(Fpl::premise_of(&json!({})), None);
     }
+
+    #[test]
+    fn body_hint_empty_is_blank() {
+        assert_eq!(body_hint(""), "");
+        assert_eq!(body_hint("   \n"), "");
+    }
+
+    #[test]
+    fn body_hint_prefers_json_message_fields() {
+        // Real FPL 400s carry the explanation in a `message` field.
+        assert_eq!(
+            body_hint(r#"{"message":"Required Integer parameter 'count' is not present"}"#),
+            " — Required Integer parameter 'count' is not present"
+        );
+        // Falls through the key priority to messageCode / error.
+        assert_eq!(
+            body_hint(r#"{"messageCode":"FAILEDPASSWORD"}"#),
+            " — FAILEDPASSWORD"
+        );
+        assert_eq!(body_hint(r#"{"error":"boom"}"#), " — boom");
+        // Nested messages[].message array.
+        assert_eq!(
+            body_hint(r#"{"messages":[{"message":"Unable to retrieve premise"}]}"#),
+            " — Unable to retrieve premise"
+        );
+    }
+
+    #[test]
+    fn body_hint_falls_back_to_snippet() {
+        // A plain-text body (e.g. the 555 "No file path available in DB").
+        assert_eq!(
+            body_hint("No file path available in DB"),
+            " — No file path available in DB"
+        );
+        // JSON without a recognized key is shown as its raw (truncated) text.
+        assert_eq!(body_hint(r#"{"foo":"bar"}"#), r#" — {"foo":"bar"}"#);
+        // Long bodies are truncated to 120 chars.
+        let long = "x".repeat(200);
+        assert_eq!(body_hint(&long).chars().count(), 120 + 3); // " — " + 120
+    }
 }
