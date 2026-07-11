@@ -52,23 +52,24 @@ pub fn accounts(list: &[AccountSummary]) {
 
 /// The account holder's contact profile, pulled from account detail.
 pub fn profile(detail: &Value) {
+    emit_lines(detail, fmt_profile(detail));
+}
+
+fn fmt_profile(detail: &Value) -> Option<Vec<String>> {
     let p = detail
         .pointer("/data/accountProfile")
-        .unwrap_or(&Value::Null);
-    if !p.is_object() {
-        render(detail);
-        return;
-    }
+        .filter(|p| p.is_object())?;
     let field = |ptr: &str| p.pointer(ptr).map(scalar).filter(|s| !s.is_empty());
 
+    let mut out = Vec::new();
     if let Some(name) = field("/accountName").or_else(|| field("/name/fullName")) {
-        println!("Name:    {name}");
+        out.push(format!("Name:    {name}"));
     }
     if let Some(email) = field("/emailAddress").or_else(|| field("/emailAddressData/value")) {
-        println!("Email:   {email}");
+        out.push(format!("Email:   {email}"));
     }
     if let Some(phone) = field("/accountPhone/value") {
-        println!("Phone:   {phone}");
+        out.push(format!("Phone:   {phone}"));
     }
     let addr = [
         "/billAddress/line1",
@@ -83,15 +84,22 @@ pub fn profile(detail: &Value) {
         // "line1, city, state zip"
         let street = addr.first().cloned().unwrap_or_default();
         let rest = addr[1..].join(" ");
-        println!(
+        out.push(format!(
             "Address: {street}{}{rest}",
             if rest.is_empty() { "" } else { ", " }
-        );
+        ));
     }
+    Some(out)
 }
 
 /// County outage feed, optionally filtered by county-name substring.
 pub fn outages(v: &Value, filter: Option<&str>) {
+    for l in fmt_outages(v, filter) {
+        println!("{l}");
+    }
+}
+
+fn fmt_outages(v: &Value, filter: Option<&str>) -> Vec<String> {
     let needle = filter.map(|s| s.to_lowercase());
     let matched: Vec<&Value> = v
         .get("outages")
@@ -111,33 +119,37 @@ pub fn outages(v: &Value, filter: Option<&str>) {
         .unwrap_or_default();
 
     if matched.is_empty() {
-        println!("(no matching counties)");
-        return;
+        return vec!["(no matching counties)".to_string()];
     }
 
+    let mut out = vec!["COUNTY | OUT | SERVED".to_string()];
     let mut total_out: i64 = 0;
-    println!("COUNTY | OUT | SERVED");
     for row in &matched {
         let name = row
             .get("County Name")
             .and_then(|c| c.as_str())
             .unwrap_or("?");
-        let out = row
-            .get("Customers Out")
-            .and_then(|c| c.as_str())
-            .unwrap_or("0");
         let served = row
             .get("Customers Served")
             .and_then(|c| c.as_str())
             .unwrap_or("0");
-        total_out += out.replace(',', "").parse::<i64>().unwrap_or(0);
-        println!("{name} | {out} | {served}");
+        let count = row
+            .get("Customers Out")
+            .and_then(|c| c.as_str())
+            .unwrap_or("0");
+        total_out += count.replace(',', "").parse::<i64>().unwrap_or(0);
+        out.push(format!("{name} | {count} | {served}"));
     }
-    println!("TOTAL OUT | {total_out}");
+    out.push(format!("TOTAL OUT | {total_out}"));
+    out
 }
 
 /// Balance read: a concise Balance / Due / Past-due block, else flatten.
 pub fn balance(v: &Value) {
+    emit_lines(v, fmt_balance(v));
+}
+
+fn fmt_balance(v: &Value) -> Option<Vec<String>> {
     let d = v.get("data").unwrap_or(v);
     let first = |keys: &[&str]| -> Option<String> {
         keys.iter()
@@ -146,25 +158,21 @@ pub fn balance(v: &Value) {
             .map(scalar)
     };
 
-    let mut printed = false;
+    let mut out = Vec::new();
     if let Some(bal) = first(&["balance", "actualBalance", "amount"]) {
-        println!("Balance:  {bal}");
-        printed = true;
+        out.push(format!("Balance:  {bal}"));
     }
     if let Some(due) = first(&["dueDateVal", "dueDate", "balance_due_date"]) {
         if !due.is_empty() {
-            println!("Due:      {due}");
-            printed = true;
+            out.push(format!("Due:      {due}"));
         }
     }
     if let Some(past) = first(&["pastDueAmount", "pastDueAmt"]) {
         if !matches!(past.as_str(), "" | "0" | "0.0" | "$0.00") {
-            println!("Past due: {past}");
+            out.push(format!("Past due: {past}"));
         }
     }
-    if !printed {
-        render(v);
-    }
+    (!out.is_empty()).then_some(out)
 }
 
 // ---- typed cell helpers for the tailored presenters ----------------------
@@ -582,6 +590,53 @@ mod tests {
         let out = fmt_ledger(&v).unwrap();
         assert_eq!(out[0], "DATE | TYPE | AMOUNT | KWH | BALANCE");
         assert_eq!(out[1], "2026-07-07 | PYMT | $-196.16 | 0 | $0.00");
+    }
+
+    #[test]
+    fn profile_from_account_detail() {
+        let v = json!({"data":{"accountProfile":{
+            "accountName":"Caleb Piekstra",
+            "emailAddress":"c@example.com",
+            "accountPhone":{"value":"360-555-1212"},
+            "billAddress":{"line1":"6810 CHURCH ST","city":"Jupiter","state":"FL","zip":33458}
+        }}});
+        let out = fmt_profile(&v).unwrap();
+        assert!(out.contains(&"Name:    Caleb Piekstra".to_string()));
+        assert!(out.contains(&"Email:   c@example.com".to_string()));
+        assert!(out.contains(&"Phone:   360-555-1212".to_string()));
+        assert!(out
+            .iter()
+            .any(|l| l == "Address: 6810 CHURCH ST, Jupiter FL 33458"));
+        // No accountProfile → fall back to the generic renderer.
+        assert!(fmt_profile(&json!({"data":{}})).is_none());
+    }
+
+    #[test]
+    fn balance_block_and_fallback() {
+        let v = json!({"data":{"balance":"$0.00","dueDateVal":"Your account is paid in full."}});
+        let out = fmt_balance(&v).unwrap();
+        assert_eq!(out[0], "Balance:  $0.00");
+        assert_eq!(out[1], "Due:      Your account is paid in full.");
+        // Nothing recognizable → fall back.
+        assert!(fmt_balance(&json!({"data":{"foo":1}})).is_none());
+    }
+
+    #[test]
+    fn outages_table_totals_and_filter() {
+        let v = json!({"outages":[
+            {"County Name":"Broward","Customers Out":"70","Customers Served":"853,654"},
+            {"County Name":"Palm Beach","Customers Out":"1,135","Customers Served":"151,037"}
+        ]});
+        let all = fmt_outages(&v, None);
+        assert_eq!(all[0], "COUNTY | OUT | SERVED");
+        assert_eq!(all.last().unwrap(), "TOTAL OUT | 1205"); // 70 + 1,135
+        let broward = fmt_outages(&v, Some("broward"));
+        assert!(broward.iter().any(|l| l == "Broward | 70 | 853,654"));
+        assert!(!broward.iter().any(|l| l.contains("Palm Beach")));
+        assert_eq!(
+            fmt_outages(&json!({"outages":[]}), Some("nope")),
+            vec!["(no matching counties)"]
+        );
     }
 
     #[test]
