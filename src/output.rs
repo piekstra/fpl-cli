@@ -184,6 +184,116 @@ fn fmt_account_detail(v: &Value) -> Option<Vec<String>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// At-a-glance dashboard combining account detail + current-period energy.
+pub fn summary(json_mode: bool, detail: &Value, energy: &Value) {
+    if json_mode {
+        json(&summary_json(detail, energy));
+    } else {
+        for l in fmt_summary(detail, energy) {
+            println!("{l}");
+        }
+    }
+}
+
+fn summary_json(detail: &Value, energy: &Value) -> Value {
+    let d = detail.get("data").cloned().unwrap_or(Value::Null);
+    let cu = energy
+        .pointer("/data/CurrentUsage")
+        .cloned()
+        .unwrap_or(Value::Null);
+    serde_json::json!({
+        "account": d.get("accountNumber"),
+        "accountType": d.get("accountType"),
+        "city": d.pointer("/serviceAddress/city"),
+        "balance": d.get("balance"),
+        "pastDue": d.get("pastDueAmt"),
+        "currentBillDate": d.get("currentBillDate"),
+        "nextBillDate": d.get("nextBillDate"),
+        "currentUsage": cu,
+    })
+}
+
+/// Render a kWh value as a whole number (`651.0` → `651 kWh`).
+fn kwh(v: &Value) -> String {
+    match v.as_f64() {
+        Some(n) => format!("{} kWh", n.round() as i64),
+        None => scalar(v),
+    }
+}
+
+fn fmt_summary(detail: &Value, energy: &Value) -> Vec<String> {
+    let d = detail.get("data").unwrap_or(detail);
+    let cu = energy.pointer("/data/CurrentUsage");
+    let cf = |k: &str| cu.and_then(|c| c.get(k)).filter(|x| !x.is_null());
+    let mut out = Vec::new();
+
+    let mut hdr: Vec<String> = Vec::new();
+    if let Some(n) = d.get("accountNumber").map(scalar).filter(|x| !x.is_empty()) {
+        hdr.push(format!("Account {n}"));
+    }
+    if let Some(t) = d.get("accountType").map(scalar).filter(|x| !x.is_empty()) {
+        hdr.push(t);
+    }
+    if let Some(c) = d
+        .pointer("/serviceAddress/city")
+        .map(scalar)
+        .filter(|x| !x.is_empty())
+    {
+        hdr.push(c);
+    }
+    if !hdr.is_empty() {
+        out.push(hdr.join("  ·  "));
+    }
+
+    if let Some(bal) = d.get("balance").filter(|x| !x.is_null()) {
+        let mut line = format!("Balance         {}", money(Some(bal)));
+        if let Some(past) = d.get("pastDueAmt") {
+            let m = money(Some(past));
+            if !matches!(m.as_str(), "" | "$0.00") {
+                line.push_str(&format!("   (past due {m})"));
+            }
+        }
+        out.push(line);
+    }
+
+    if d.get("currentBillDate").is_some() && d.get("nextBillDate").is_some() {
+        let days = match (
+            cf("asOfDays").and_then(|x| x.as_i64()),
+            cf("serviceDays").and_then(|x| x.as_i64()),
+        ) {
+            (Some(a), Some(s)) => format!("   (day {a} of {s})"),
+            _ => String::new(),
+        };
+        out.push(format!(
+            "Cycle           {} → {}{days}",
+            short_date(d.get("currentBillDate")),
+            short_date(d.get("nextBillDate")),
+        ));
+    }
+
+    if let Some(pb) = cf("projectedBill") {
+        let btd = cf("billToDate")
+            .map(|x| format!("   ·  bill-to-date {}", money(Some(x))))
+            .unwrap_or_default();
+        let avg = cf("dailyAvg")
+            .map(|x| format!("   ·  ~{}/day", money(Some(x))))
+            .unwrap_or_default();
+        out.push(format!("Projected bill  {}{btd}{avg}", money(Some(pb))));
+    }
+
+    if let Some(pk) = cf("projectedKWH") {
+        let so_far = cf("billToDateKWH")
+            .map(|x| format!("   ·  {} so far", kwh(x)))
+            .unwrap_or_default();
+        let avg = cf("dailyAverageKWH")
+            .map(|x| format!("   ·  ~{}/day", kwh(x)))
+            .unwrap_or_default();
+        out.push(format!("Projected use   {}{so_far}{avg}", kwh(pk)));
+    }
+
+    out
+}
+
 /// County outage feed, optionally filtered by county-name substring.
 pub fn outages(v: &Value, filter: Option<&str>) {
     for l in fmt_outages(v, filter) {
@@ -724,6 +834,33 @@ mod tests {
         // No past-due line when zero.
         assert!(!out.iter().any(|l| l.starts_with("Past due")));
         assert!(fmt_account_detail(&json!({"foo":1})).is_none());
+    }
+
+    #[test]
+    fn summary_dashboard() {
+        let detail = json!({"data":{
+            "accountNumber":"4265842247","accountType":"RESIDENTIAL",
+            "serviceAddress":{"city":"Jupiter"},
+            "balance":0.0,"pastDueAmt":0.0,
+            "currentBillDate":"2026-06-26T05:00:00.000","nextBillDate":"2026-07-28T05:00:00.000"
+        }});
+        let energy = json!({"data":{"CurrentUsage":{
+            "projectedBill":204.43,"billToDate":90.94,"dailyAvg":6.06,
+            "projectedKWH":1389,"billToDateKWH":651.0,"dailyAverageKWH":43,
+            "asOfDays":15,"serviceDays":32
+        }}});
+        let out = fmt_summary(&detail, &energy);
+        assert_eq!(out[0], "Account 4265842247  ·  RESIDENTIAL  ·  Jupiter");
+        assert!(out.iter().any(|l| l == "Balance         $0.00"));
+        assert!(out
+            .iter()
+            .any(|l| l.contains("2026-06-26 → 2026-07-28") && l.contains("day 15 of 32")));
+        assert!(out.iter().any(|l| l.starts_with("Projected bill  $204.43")
+            && l.contains("bill-to-date $90.94")
+            && l.contains("~$6.06/day")));
+        assert!(out.iter().any(|l| l.starts_with("Projected use   1389 kWh")
+            && l.contains("651 kWh so far")
+            && l.contains("~43 kWh/day")));
     }
 
     #[test]

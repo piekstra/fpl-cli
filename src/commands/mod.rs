@@ -14,6 +14,7 @@ pub mod outages;
 pub mod payments;
 pub mod profile;
 pub mod set_credential;
+pub mod summary;
 pub mod update;
 pub mod usage;
 

@@ -64,6 +64,20 @@ The surface is resource groups + fixed verbs (`list`, `get`, `use`, `create`).
 Most commands take an optional `[account-id]`; omit it to use the active account
 (set with `accounts use`, or the first account on your login).
 
+### At a glance
+
+```sh
+$ fpl summary
+Account 4265842247  ·  RESIDENTIAL  ·  Jupiter
+Balance         $0.00
+Cycle           2026-06-26 → 2026-07-28   (day 15 of 32)
+Projected bill  $204.43   ·  bill-to-date $90.94   ·  ~$6.06/day
+Projected use   1389 kWh  ·  651 kWh so far        ·  ~43 kWh/day
+```
+
+`fpl summary [account-id]` is the daily-driver dashboard — balance, bill cycle,
+and projected bill/usage in one call. `--json` emits a structured payload.
+
 ### Accounts & profile
 
 ```sh

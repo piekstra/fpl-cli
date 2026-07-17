@@ -61,6 +61,12 @@ pub enum Command {
     #[command(subcommand)]
     Auth(AuthCommand),
 
+    /// At-a-glance dashboard: balance, bill cycle, projected bill and usage.
+    Summary {
+        /// Account number (defaults to active / --account).
+        account_id: Option<String>,
+    },
+
     /// Accounts on your login: list, detail, active-account selection, balance.
     #[command(subcommand)]
     Accounts(AccountsCommand),
