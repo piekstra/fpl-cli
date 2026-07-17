@@ -162,6 +162,16 @@ GitHub Releases and swaps the running binary in place. (`fpl update` still works
 as an alias. If you installed with `cargo install`, `git pull && make install`
 also works.)
 
+### Shell completions & discovery
+
+```sh
+fpl completions zsh > ~/.zfunc/_fpl   # bash | zsh | fish | powershell | elvish
+fpl info                             # machine-readable capabilities (cli-info/v1 JSON)
+```
+
+`fpl info` reports the command surface, auth method, and version as JSON — handy
+for agents and tooling that introspect the CLI before driving it.
+
 ## Output & scripting
 
 **Text is the default.** Resource reads render `Key: value` blocks and
