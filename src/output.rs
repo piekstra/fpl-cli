@@ -92,6 +92,98 @@ fn fmt_profile(detail: &Value) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// Account detail summary: identity, service address, meter, bill cycle, money.
+pub fn account_detail(v: &Value) {
+    emit_lines(v, fmt_account_detail(v));
+}
+
+fn fmt_account_detail(v: &Value) -> Option<Vec<String>> {
+    let d = v.get("data").filter(|d| d.is_object())?;
+    let s = |k: &str| d.get(k).map(scalar).filter(|x| !x.is_empty());
+    let mut out = Vec::new();
+
+    if let Some(num) = s("accountNumber") {
+        let extra = [
+            s("accountType"),
+            s("statusName").or_else(|| s("statusCategory")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
+        out.push(if extra.is_empty() {
+            format!("Account:  {num}")
+        } else {
+            format!("Account:  {num}  ({extra})")
+        });
+    }
+    if let Some(addr) = d.get("serviceAddress") {
+        let a = |k: &str| addr.get(k).map(scalar).filter(|x| !x.is_empty());
+        let street = a("line1").unwrap_or_default();
+        let locality = [a("city"), a("state"), a("zip")]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let full = [street, locality]
+            .into_iter()
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !full.is_empty() {
+            out.push(format!("Service:  {full}"));
+        }
+    }
+    if let Some(meter) = s("meterNo") {
+        let serial = s("meterSerialNo")
+            .map(|x| format!("  (serial {x})"))
+            .unwrap_or_default();
+        out.push(format!("Meter:    {meter}{serial}"));
+    }
+    if let Some(p) = s("premiseNumber") {
+        out.push(format!("Premise:  {p}"));
+    }
+    // riderCode is often the sentinel "NO RIDER CODE" — drop it when there's none.
+    let rider = s("riderCode").filter(|r| !r.to_uppercase().contains("NO RIDER"));
+    let rate = [s("rateCode"), rider]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !rate.is_empty() {
+        out.push(format!("Rate:     {rate}"));
+    }
+    if d.get("currentBillDate").is_some() && d.get("nextBillDate").is_some() {
+        out.push(format!(
+            "Cycle:    {} to {}",
+            short_date(d.get("currentBillDate")),
+            short_date(d.get("nextBillDate"))
+        ));
+    }
+    if let Some(bal) = d.get("balance").filter(|x| !x.is_null()) {
+        out.push(format!("Balance:  {}", money(Some(bal))));
+    }
+    if let Some(past) = d.get("pastDueAmt") {
+        let m = money(Some(past));
+        if !matches!(m.as_str(), "" | "$0.00") {
+            out.push(format!("Past due: {m}"));
+        }
+    }
+    if let Some(lp) = d.get("lastPaymentAmt").filter(|x| !x.is_null()) {
+        let amt = money(Some(lp));
+        if !amt.is_empty() && amt != "$0.00" {
+            let date = short_date(d.get("lastPaymentDate"));
+            let when = if date.is_empty() {
+                String::new()
+            } else {
+                format!(" on {date}")
+            };
+            out.push(format!("Last pay: {amt}{when}"));
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 /// County outage feed, optionally filtered by county-name substring.
 pub fn outages(v: &Value, filter: Option<&str>) {
     for l in fmt_outages(v, filter) {
@@ -609,6 +701,29 @@ mod tests {
             .any(|l| l == "Address: 6810 CHURCH ST, Jupiter FL 33458"));
         // No accountProfile → fall back to the generic renderer.
         assert!(fmt_profile(&json!({"data":{}})).is_none());
+    }
+
+    #[test]
+    fn account_detail_summary() {
+        let v = json!({"data":{
+            "accountNumber":"4265842247","accountType":"RESIDENTIAL","statusName":"ACTIVE",
+            "serviceAddress":{"line1":"6810 CHURCH ST","city":"Jupiter","state":"FL","zip":33458},
+            "meterNo":"D9267","meterSerialNo":"22838523","premiseNumber":"598237201",
+            "rateCode":"RS1","riderCode":"",
+            "currentBillDate":"2026-06-26T05:00:00.000","nextBillDate":"2026-07-28T05:00:00.000",
+            "balance":0.0,"pastDueAmt":0.0,
+            "lastPaymentAmt":196.16,"lastPaymentDate":"2026-07-07T00:00:00.000"
+        }});
+        let out = fmt_account_detail(&v).unwrap();
+        assert_eq!(out[0], "Account:  4265842247  (RESIDENTIAL, ACTIVE)");
+        assert!(out.contains(&"Service:  6810 CHURCH ST, Jupiter FL 33458".to_string()));
+        assert!(out.contains(&"Meter:    D9267  (serial 22838523)".to_string()));
+        assert!(out.contains(&"Cycle:    2026-06-26 to 2026-07-28".to_string()));
+        assert!(out.contains(&"Balance:  $0.00".to_string()));
+        assert!(out.contains(&"Last pay: $196.16 on 2026-07-07".to_string()));
+        // No past-due line when zero.
+        assert!(!out.iter().any(|l| l.starts_with("Past due")));
+        assert!(fmt_account_detail(&json!({"foo":1})).is_none());
     }
 
     #[test]

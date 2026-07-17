@@ -15,7 +15,11 @@ pub fn run(ctx: &Ctx, cmd: &AccountsCommand) -> Result<(), AppError> {
         AccountsCommand::Get { account_id } => {
             let fpl = ctx.connect()?;
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(ctx.cli.json, &fpl.account_detail(&account)?, output::render);
+            output::emit(
+                ctx.cli.json,
+                &fpl.account_detail(&account)?,
+                output::account_detail,
+            );
         }
         AccountsCommand::Use { account_id } => {
             let mut cfg = Config::load()?;
