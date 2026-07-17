@@ -51,8 +51,12 @@ pub struct AccountSummary {
 fn build_client() -> Result<reqwest::blocking::Client, AppError> {
     reqwest::blocking::Client::builder()
         .user_agent(UA)
-        .cookie_store(true)
+        // Total request budget, plus an explicit connect budget so a stalled
+        // TCP/TLS handshake (which the overall `.timeout()` doesn't reliably
+        // bound) fails fast instead of hanging.
         .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(15))
+        .cookie_store(true)
         .build()
         .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))
 }
