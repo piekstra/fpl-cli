@@ -213,12 +213,23 @@ fn summary_json(detail: &Value, energy: &Value) -> Value {
     })
 }
 
-/// Render a kWh value as a whole number (`651.0` → `651 kWh`).
+/// Coerce a JSON number *or* numeric string to an integer. FPL returns many
+/// numeric fields (kWh, day counts) as strings.
+fn num_i64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_f64().map(|f| f.round() as i64))
+        .or_else(|| {
+            v.as_str()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .map(|f| f.round() as i64)
+        })
+}
+
+/// Render a kWh value as a whole number (`"651.0"` → `651 kWh`).
 fn kwh(v: &Value) -> String {
-    match v.as_f64() {
-        Some(n) => format!("{} kWh", n.round() as i64),
-        None => scalar(v),
-    }
+    num_i64(v)
+        .map(|n| format!("{n} kWh"))
+        .unwrap_or_else(|| scalar(v))
 }
 
 fn fmt_summary(detail: &Value, energy: &Value) -> Vec<String> {
@@ -258,8 +269,8 @@ fn fmt_summary(detail: &Value, energy: &Value) -> Vec<String> {
 
     if d.get("currentBillDate").is_some() && d.get("nextBillDate").is_some() {
         let days = match (
-            cf("asOfDays").and_then(|x| x.as_i64()),
-            cf("serviceDays").and_then(|x| x.as_i64()),
+            cf("asOfDays").and_then(num_i64),
+            cf("serviceDays").and_then(num_i64),
         ) {
             (Some(a), Some(s)) => format!("   (day {a} of {s})"),
             _ => String::new(),
@@ -844,10 +855,11 @@ mod tests {
             "balance":0.0,"pastDueAmt":0.0,
             "currentBillDate":"2026-06-26T05:00:00.000","nextBillDate":"2026-07-28T05:00:00.000"
         }});
+        // FPL returns these numeric fields as strings; the renderer must coerce.
         let energy = json!({"data":{"CurrentUsage":{
             "projectedBill":204.43,"billToDate":90.94,"dailyAvg":6.06,
-            "projectedKWH":1389,"billToDateKWH":651.0,"dailyAverageKWH":43,
-            "asOfDays":15,"serviceDays":32
+            "projectedKWH":"1389","billToDateKWH":"651.0","dailyAverageKWH":"43",
+            "asOfDays":"15","serviceDays":"32"
         }}});
         let out = fmt_summary(&detail, &energy);
         assert_eq!(out[0], "Account 4265842247  ·  RESIDENTIAL  ·  Jupiter");
