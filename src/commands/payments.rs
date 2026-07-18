@@ -4,15 +4,21 @@
 //! confirms by default and skips only with `--force`. A non-TTY run without
 //! `--force` fails with a hint rather than auto-submitting.
 //!
-//! The request body mirrors what fpl.com's own pay-bill page builds
-//! (`{ amount, paymentDate, donations }`, drawing the bank account on file).
-//! It's reconstructed from the site's JS, not confirmed against a live submit —
-//! a malformed body is rejected upstream, so it fails safe rather than
-//! misrouting a payment.
+//! The submit is an HTTP **PUT** to the payment resource with the verified body
+//! `{ amount, paymentDate, donations }`, drawing the bank account on file.
+//!
+//! **Critical, confirmed against a live submit:** FPL's payment endpoint
+//! *commits the payment and then may still return an HTTP error* (a post-commit
+//! confirmation step failing). The HTTP status is therefore **not** a reliable
+//! success signal — a 400 does **not** mean the money didn't move. So rather
+//! than trust the response, `create` records the account balance before
+//! submitting and re-reads it after: a balance that dropped by the amount means
+//! the payment posted, whatever the HTTP response said.
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::cli::PaymentsCommand;
+use crate::client::Fpl;
 use crate::commands::{confirm, stdin_is_tty, Ctx};
 use crate::error::AppError;
 use crate::output;
@@ -66,20 +72,97 @@ pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
                 }
             }
 
-            // Body shape mirrors fpl.com's pay-bill request: the amount, the
-            // scheduled date, and a (usually empty) donations list. The draw
-            // account is the bank account on file, not passed here.
-            let body = json!({
-                "amount": amount,
-                "paymentDate": pay_date,
-                "donations": [],
-            });
-            output::emit(
-                ctx.cli.json,
-                &fpl.make_payment(&account, &body)?,
-                output::render,
-            );
+            let amount_f = amount
+                .trim()
+                .trim_start_matches('$')
+                .replace(',', "")
+                .parse::<f64>()
+                .map_err(|_| {
+                    AppError::Usage(format!(
+                        "invalid --amount {amount:?} (use a number like 12.34)"
+                    ))
+                })?;
+
+            return submit_and_verify(ctx, &fpl, &account, amount, amount_f, &pay_date);
         }
     }
     Ok(())
+}
+
+/// Read `data.currentAccountBalance` from a payment-option payload.
+fn balance_of(opts: &Value) -> Option<f64> {
+    opts.pointer("/data/currentAccountBalance")
+        .and_then(Value::as_f64)
+}
+
+/// Submit a payment, then decide success from the account balance rather than
+/// the HTTP status (FPL commits even when it returns an error — see module doc).
+fn submit_and_verify(
+    ctx: &Ctx,
+    fpl: &Fpl,
+    account: &str,
+    amount: &str,
+    amount_f: f64,
+    pay_date: &str,
+) -> Result<(), AppError> {
+    // Body shape mirrors fpl.com's pay-bill request: the amount, the scheduled
+    // date, and a (usually empty) donations list. The draw account is the bank
+    // account on file, not passed here.
+    let body = json!({ "amount": amount, "paymentDate": pay_date, "donations": [] });
+
+    let before = balance_of(&fpl.payment_options(account)?);
+    let submit = fpl.make_payment(account, &body);
+    let after = fpl
+        .payment_options(account)
+        .ok()
+        .as_ref()
+        .and_then(balance_of);
+
+    // Posted iff the balance dropped by (about) the amount paid.
+    let posted =
+        matches!((before, after), (Some(b0), Some(b1)) if (b0 - b1 - amount_f).abs() < 0.005);
+
+    if ctx.cli.json {
+        output::json(&json!({
+            "posted": posted,
+            "amount": amount_f,
+            "account": account,
+            "paymentDate": pay_date,
+            "balanceBefore": before,
+            "balanceAfter": after,
+            "httpError": submit.as_ref().err().map(|e| e.to_string()),
+        }));
+    }
+
+    if posted {
+        if !ctx.cli.json {
+            let bal = after
+                .map(|b| format!("; account balance now {}", money(b)))
+                .unwrap_or_default();
+            println!(
+                "Payment of {} posted to account {account}{bal}.",
+                money(amount_f)
+            );
+            if submit.is_err() {
+                eprintln!(
+                    "note: FPL returned an error response, but the payment posted \
+                     (verified against your balance)."
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // Not posted. Surface FPL's message if we have one; otherwise say so plainly.
+    match submit {
+        Err(e) => Err(e),
+        Ok(_) => Err(AppError::Upstream(format!(
+            "payment of {} did not post — balance unchanged (verify with `fpl payments methods`)",
+            money(amount_f)
+        ))),
+    }
+}
+
+fn money(v: f64) -> String {
+    format!("${v:.2}")
 }

@@ -198,6 +198,15 @@ impl Fpl {
         self.handle(resp, path)
     }
 
+    pub fn put(&self, path: &str, body: &Value) -> Result<Value, AppError> {
+        let resp = self
+            .auth_headers(self.client.put(url_for(path)))
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()?;
+        self.handle(resp, path)
+    }
+
     /// Raw request escape hatch used by `fpl api`. `method` is case-insensitive.
     pub fn request(
         &self,
@@ -209,14 +218,7 @@ impl Fpl {
         match m.as_str() {
             "GET" => self.get(path),
             "POST" => self.post(path, body.unwrap_or(&Value::Null)),
-            "PUT" => {
-                let resp = self
-                    .auth_headers(self.client.put(url_for(path)))
-                    .header("Content-Type", "application/json")
-                    .json(body.unwrap_or(&Value::Null))
-                    .send()?;
-                self.handle(resp, path)
-            }
+            "PUT" => self.put(path, body.unwrap_or(&Value::Null)),
             "DELETE" => {
                 let resp = self
                     .auth_headers(self.client.delete(url_for(path)))
@@ -444,8 +446,10 @@ impl Fpl {
         ))
     }
 
+    /// Submit a payment. FPL's payment service creates via HTTP **PUT** (its
+    /// `ServiceInvoker._create` uses PUT, not POST — a POST here 404s).
     pub fn make_payment(&self, account: &str, body: &Value) -> Result<Value, AppError> {
-        self.post(
+        self.put(
             &format!("/cs/customer/v1/paymentservices/resources/account/{account}/payment"),
             body,
         )

@@ -110,9 +110,15 @@ A payment draws from the bank account on file (see `payments methods`); the
 date defaults to today. `payments create` **will not submit without
 confirmation** — it prompts `[y/N]`, or requires `--force` in a non-interactive
 shell. Money movement is hard to reverse, so `--force` is the explicit go-ahead.
-The submit request is reconstructed from fpl.com's own pay-bill flow but hasn't
-been exercised against a live submission; a malformed request is rejected
-upstream rather than misrouting money.
+
+**On success reporting:** FPL's payment endpoint commits the payment and *then*
+sometimes returns an HTTP error (a post-commit confirmation step), so the HTTP
+status is not a reliable signal — a 400 does **not** mean the charge didn't
+happen. `create` therefore reads your account balance before and after
+submitting and reports success from the balance change, not the response. If the
+balance drops by the amount, it reports the payment as posted (even if FPL
+returned an error); if it doesn't, it reports the payment did not post. FPL also
+rejects a second payment for the same amount on the same day.
 
 ### Usage
 
