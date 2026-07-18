@@ -256,12 +256,10 @@ pub enum PaymentsCommand {
         /// Amount in dollars, e.g. 123.45.
         #[arg(long)]
         amount: String,
-        /// Payment date as MM-DD-YYYY (default: today).
+        /// Payment date as YYYY-MM-DD (default: today). Draws from the
+        /// bank account on file (see `payments methods`).
         #[arg(long)]
         date: Option<String>,
-        /// Payment method / bank-account token id (from `payments methods`).
-        #[arg(long)]
-        method: Option<String>,
         /// Account number (defaults to active / --account).
         #[arg(long)]
         account_id: Option<String>,

@@ -101,14 +101,18 @@ fpl bills budget [account-id]     # Budget Billing plan status + monthly graph
 
 ```sh
 fpl payments list [account-id]    # payments from the account ledger
-fpl payments methods [account-id] # saved payment methods / options
+fpl payments methods [account-id] # saved payment methods / options (bank on file)
 fpl payments create --amount 123.45              # make a payment (asks to confirm)
-fpl payments create --amount 123.45 --date 08-01-2026 --method <id> --force
+fpl payments create --amount 123.45 --date 2026-08-01 --force
 ```
 
-`payments create` **will not submit without confirmation** — it prompts `[y/N]`,
-or requires `--force` in a non-interactive shell. Money movement is hard to
-reverse, so `--force` is the explicit go-ahead.
+A payment draws from the bank account on file (see `payments methods`); the
+date defaults to today. `payments create` **will not submit without
+confirmation** — it prompts `[y/N]`, or requires `--force` in a non-interactive
+shell. Money movement is hard to reverse, so `--force` is the explicit go-ahead.
+The submit request is reconstructed from fpl.com's own pay-bill flow but hasn't
+been exercised against a live submission; a malformed request is rejected
+upstream rather than misrouting money.
 
 ### Usage
 
