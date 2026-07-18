@@ -56,7 +56,7 @@ premise number from account detail.
 | `usage hourly` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-hourly-usage` |
 | `usage appliances` | POST | `/cs/customer/v1/energyanalyzer/resources/{account}/getDisaggResp` |
 | `payments methods` | GET | `/cs/customer/v1/paymentservices/resources/account/{account}/payment-option` |
-| `payments create` | POST | `/cs/customer/v1/paymentservices/resources/account/{account}/payment` |
+| `payments create` | **PUT** | `/cs/customer/v1/paymentservices/resources/account/{account}/payment` |
 | `payments list` / `history list --type account` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/account-history?count=25&start=1&sortBy=date` |
 | `history list --type deposit` | GET | `/cs/customer/v1/accounthistory/resources/account/{account}/deposit-history?count=25&start=1&sortBy=date` |
 | `outages list` | GET | `https://www.fplmaps.com/customer/outage/CountyOutages.json` *(public, no auth)* |
@@ -83,10 +83,28 @@ bill's amounts, dates, and usage as text.
 - **`mobile-hourly-usage`**: `{ premiseNumber, startDate: "MM-DD-YYYY" }` (note
   the dashed date here, versus the undashed `MMDDYYYY` elsewhere).
 - **`getDisaggResp`**: `{ premiseId, accountNumber }`.
-- **`payment`**: `fpl-cli` sends `{ paymentAmount, paymentDate: "MM-DD-YYYY",
-  paymentMethod? }`. This body is **best-effort** — the exact schema FPL expects
-  hasn't been confirmed against a live submission. Verify with a small amount, or
-  use `fpl api` with a payload you've captured, before relying on it.
+- **`payment`** (verified against live submissions): issued as an HTTP **`PUT`**
+  (FPL's `ServiceInvoker._create` uses PUT — a `POST` to this URL `404`s). Body
+  is `{ amount, paymentDate: "YYYY-MM-DD", donations: [] }`, drawing the bank
+  account on file (from `payment-option`). The draw account, `requestedBy`, and
+  channel are **not** sent — the web app wraps the payload in a `transactionData`
+  envelope for its `/api/resources` gateway, but the direct backend rejects that
+  envelope (`For input string: ""`, an empty-int parse) and wants the bare body.
+
+  **⚠️ The endpoint commits the payment and *then* may return an HTTP `4xx`** (a
+  post-commit confirmation step; response is `{"messages":[{"messageType":"ERROR"}]}`
+  with no text). **Money moves even on a 400** — the HTTP status is not a success
+  signal. `payments create` therefore reads `currentAccountBalance` before and
+  after and reports success from the balance delta, not the response. FPL also
+  rejects a second payment for the same amount the same day (a business-logic
+  409-style guard returned as a 400 with a "payment for this amount was already
+  made today" message).
+
+  **Follow-up (not yet done):** find the request that returns a clean `200` with
+  a `confirmationNumber` (the web success handler reads `{data:{confirmationNumber,
+  emailAddress}}`). Every real attempt is a live charge, so this needs a batch of
+  small test payments at distinct amounts (the same amount can't be retried same
+  day). Until then the balance-delta verification is the reliable success signal.
 
 ## Other known endpoints (not wrapped)
 
