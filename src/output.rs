@@ -1,20 +1,28 @@
 //! Output rendering.
 //!
 //! **Text is the primary format.** Resource reads render token-dense
-//! `Key: value` blocks and pipe-delimited tables (`ALL_CAPS` headers). JSON is
-//! reserved for control-plane signals — `init` / `set-credential` results,
-//! `auth status`, and the raw `api` payload — never bolted onto resource reads.
-//! Data goes to stdout; diagnostics and confirmations go to stderr.
+//! `Key: value` blocks and pipe-delimited tables (`ALL_CAPS` headers). Data
+//! goes to stdout; diagnostics and confirmations go to stderr.
+//!
+//! **`--json` emits the utility/v1 domain profile** on the profile commands
+//! (`summary` / `accounts balance` → `utility-summary/v1`; `bills list`,
+//! `payments list`, `history list` → `Paged` `<record>-list/v1` envelopes —
+//! see the "utility/v1 profile mapping" section below). Elsewhere `--json` is
+//! the raw FPL payload or a control-plane DTO (`auth status`, `info`, `api`).
 //!
 //! Many FPL response shapes aren't pinned down yet, so [`render`] flattens
 //! whatever JSON comes back into readable text. As shapes are confirmed, add a
 //! purpose-built renderer next to the generic one. For the raw structure, use
 //! `fpl api`.
 
+use pk_cli_core::dates::{self, Civil};
 use pk_cli_core::output::scalar;
+use pk_cli_core::Money;
+use pk_cli_utility::{Paged, Payment, RangeArgs, Statement, Transaction, UtilitySummary};
 use serde_json::Value;
 
 use crate::client::AccountSummary;
+use crate::error::AppError;
 
 pub use pk_cli_core::output::{fail, json};
 
@@ -184,33 +192,13 @@ fn fmt_account_detail(v: &Value) -> Option<Vec<String>> {
     (!out.is_empty()).then_some(out)
 }
 
-/// At-a-glance dashboard combining account detail + current-period energy.
-pub fn summary(json_mode: bool, detail: &Value, energy: &Value) {
-    if json_mode {
-        json(&summary_json(detail, energy));
-    } else {
-        for l in fmt_summary(detail, energy) {
-            println!("{l}");
-        }
+/// At-a-glance text dashboard combining account detail + current-period
+/// energy. (`summary --json` emits the utility/v1 card via
+/// [`utility_summary`] instead.)
+pub fn summary_text(detail: &Value, energy: &Value) {
+    for l in fmt_summary(detail, energy) {
+        println!("{l}");
     }
-}
-
-fn summary_json(detail: &Value, energy: &Value) -> Value {
-    let d = detail.get("data").cloned().unwrap_or(Value::Null);
-    let cu = energy
-        .pointer("/data/CurrentUsage")
-        .cloned()
-        .unwrap_or(Value::Null);
-    serde_json::json!({
-        "account": d.get("accountNumber"),
-        "accountType": d.get("accountType"),
-        "city": d.pointer("/serviceAddress/city"),
-        "balance": d.get("balance"),
-        "pastDue": d.get("pastDueAmt"),
-        "currentBillDate": d.get("currentBillDate"),
-        "nextBillDate": d.get("nextBillDate"),
-        "currentUsage": cu,
-    })
 }
 
 /// Coerce a JSON number *or* numeric string to an integer. FPL returns many
@@ -669,15 +657,7 @@ pub fn payments_list(v: &Value) {
 
 fn fmt_payments_list(v: &Value) -> Option<Vec<String>> {
     let rows = v.get("data").and_then(|x| x.as_array())?;
-    let pmts: Vec<&Value> = rows
-        .iter()
-        .filter(|r| {
-            r.get("debitCreditDescriptionCode")
-                .and_then(|c| c.as_str())
-                .map(|c| c.eq_ignore_ascii_case("PYMT"))
-                .unwrap_or(false)
-        })
-        .collect();
+    let pmts: Vec<&Value> = rows.iter().filter(|r| is_payment_row(r)).collect();
     if pmts.is_empty() {
         return Some(vec!["(no payments in the recent ledger)".to_string()]);
     }
@@ -696,6 +676,217 @@ fn fmt_payments_list(v: &Value) -> Option<Vec<String>> {
         ));
     }
     Some(out)
+}
+
+// ---- utility/v1 profile mapping -------------------------------------------
+//
+// The domain DTOs from `pk-cli-utility` (cli-common SPEC v1.1 §1.8). Raw FPL
+// payloads are mapped here, at the emission layer only — handlers keep
+// passing provider JSON around. Money is string-decimal (never floats); dates
+// are ISO `YYYY-MM-DD`, with unrecognized provider text passed through
+// verbatim.
+
+/// A ledger row that is a posted payment (`PYMT`).
+pub(crate) fn is_payment_row(r: &Value) -> bool {
+    r.get("debitCreditDescriptionCode")
+        .and_then(|c| c.as_str())
+        .map(|c| c.eq_ignore_ascii_case("PYMT"))
+        .unwrap_or(false)
+}
+
+/// Normalize an FPL date string to ISO `YYYY-MM-DD`: ISO datetimes are
+/// truncated, `MM/DD/YYYY` / `MM-DD-YYYY` are converted, and unrecognized
+/// text passes through verbatim (profile contract).
+fn iso_date(s: &str) -> String {
+    let t = s.trim();
+    let b = t.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    // `YYYY-MM-DD`, possibly with a `T…` datetime tail.
+    if b.len() >= 10
+        && digits(0..4)
+        && b[4] == b'-'
+        && digits(5..7)
+        && b[7] == b'-'
+        && digits(8..10)
+        && (b.len() == 10 || !b[10].is_ascii_digit())
+    {
+        return t[..10].to_string();
+    }
+    // `MM/DD/YYYY` or `MM-DD-YYYY` (the year length keeps this from ever
+    // matching an ISO date).
+    for sep in ['/', '-'] {
+        let parts: Vec<&str> = t.split(sep).collect();
+        if parts.len() == 3
+            && parts[2].len() == 4
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
+        {
+            let (m, d, y) = (
+                parts[0].parse::<u32>().unwrap_or(0),
+                parts[1].parse::<u32>().unwrap_or(0),
+                parts[2].parse::<i64>().unwrap_or(0),
+            );
+            if (1..=12).contains(&m) && (1..=31).contains(&d) {
+                return format!("{y:04}-{m:02}-{d:02}");
+            }
+        }
+    }
+    t.to_string()
+}
+
+/// f64 dollars → profile `Money` (string-decimal, two fraction digits).
+fn money_f64(v: f64) -> Money {
+    let cents = (v * 100.0).round() as i64;
+    Money::usd(format!(
+        "{}{}.{:02}",
+        if cents < 0 { "-" } else { "" },
+        (cents / 100).abs(),
+        (cents % 100).abs()
+    ))
+}
+
+/// FPL money field (a JSON number, or a string like `"$1,234.50"`) → `Money`.
+fn money_value(v: Option<&Value>) -> Option<Money> {
+    match v? {
+        Value::Number(n) => Some(money_f64(n.as_f64()?)),
+        Value::String(s) => Money::parse_usd(s),
+        _ => None,
+    }
+}
+
+/// Validate `--since`/`--until` and parse them into comparable civil dates.
+pub fn range_bounds(range: &RangeArgs) -> Result<(Option<Civil>, Option<Civil>), AppError> {
+    range.validate()?;
+    let bound = |v: &Option<String>| v.as_deref().map(dates::parse_iso).transpose();
+    Ok((bound(&range.since)?, bound(&range.until)?))
+}
+
+/// The civil date of a provider date string, via ISO normalization.
+fn civil_of(raw: &str) -> Option<Civil> {
+    dates::parse_iso(&iso_date(raw)).ok()
+}
+
+/// Keep the rows whose `date_key` falls inside the inclusive bounds, then
+/// truncate to `limit`. A row without a readable date fails any explicit
+/// bound (it can't be compared); with no bounds set, every row passes.
+pub fn apply_range(
+    rows: &[Value],
+    date_key: &str,
+    since: Option<Civil>,
+    until: Option<Civil>,
+    limit: Option<u32>,
+) -> Vec<Value> {
+    let mut out: Vec<Value> = rows
+        .iter()
+        .filter(|r| {
+            if since.is_none() && until.is_none() {
+                return true;
+            }
+            let Some(d) = r.get(date_key).and_then(Value::as_str).and_then(civil_of) else {
+                return false;
+            };
+            since.map_or(true, |s| d >= s) && until.map_or(true, |u| d <= u)
+        })
+        .cloned()
+        .collect();
+    if let Some(n) = limit {
+        out.truncate(n as usize);
+    }
+    out
+}
+
+/// `summary --json` / `accounts balance --json`: the utility-summary/v1 card.
+/// `v` is either an account-detail payload or a `loginNew` balance row;
+/// `account` is the resolved account number (used when the payload has none).
+pub fn utility_summary(v: &Value, account: &str) {
+    json(&serde_json::to_value(utility_summary_dto(v, account)).unwrap_or_default());
+}
+
+fn utility_summary_dto(v: &Value, account: &str) -> UtilitySummary {
+    let d = v.get("data").unwrap_or(v);
+    let first = |keys: &[&str]| -> Option<&Value> {
+        keys.iter().filter_map(|k| d.get(*k)).find(|x| !x.is_null())
+    };
+    let mut dto = UtilitySummary::new(
+        money_value(first(&["balance", "actualBalance", "amount"]))
+            .unwrap_or_else(|| Money::usd("0.00")),
+    );
+    dto.due_date = first(&["dueDateVal", "dueDate", "balance_due_date"])
+        .map(scalar)
+        .filter(|s| !s.is_empty())
+        .map(|s| iso_date(&s));
+    dto.account = d
+        .get("accountNumber")
+        .map(scalar)
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(account.to_string()).filter(|s| !s.is_empty()));
+    // autopay stays unset: FPL's detail/balance payloads don't carry an
+    // enrollment flag (enrollment lives behind unwrapped endpoints).
+    dto
+}
+
+/// `bills list --json`: the statement-list/v1 envelope. The statement's ISO
+/// bill date is its id — FPL statements are addressed by date
+/// (`bills download --date`).
+pub fn statements(rows: &[Value]) {
+    let items: Vec<Statement> = rows.iter().filter_map(statement_of).collect();
+    json(&serde_json::to_value(Paged::new("statement", items)).unwrap_or_default());
+}
+
+fn statement_of(r: &Value) -> Option<Statement> {
+    let date = iso_date(r.get("dateBilled")?.as_str()?);
+    Some(Statement {
+        id: date.clone(),
+        date: Some(date),
+        amount: money_value(r.get("totalBillAmount")).unwrap_or_else(|| Money::usd("0.00")),
+        due_date: r.get("dueDate").and_then(Value::as_str).map(iso_date),
+        paid: None,
+    })
+}
+
+/// `payments list --json`: the payment-list/v1 envelope (rows pre-filtered to
+/// payments by the handler).
+pub fn payments(rows: &[Value]) {
+    let items: Vec<Payment> = rows.iter().filter_map(payment_of).collect();
+    json(&serde_json::to_value(Paged::new("payment", items)).unwrap_or_default());
+}
+
+fn payment_of(r: &Value) -> Option<Payment> {
+    let date = iso_date(r.get("debitCreditTransactionDate")?.as_str()?);
+    // Payments are credits (negative in the ledger); report the magnitude,
+    // matching the text table.
+    let amount = r.get("debitCreditAmount").and_then(Value::as_f64)?;
+    Some(Payment {
+        date,
+        amount: money_f64(amount.abs()),
+        method: None,
+        status: None,
+        confirmation: None,
+    })
+}
+
+/// `history list --json`: the transaction-list/v1 envelope. `kind` is the
+/// ledger the `--type` flag selected (`account` | `deposit`).
+pub fn transactions(rows: &[Value], kind: &str) {
+    let items: Vec<Transaction> = rows
+        .iter()
+        .filter_map(|r| transaction_of(r, kind))
+        .collect();
+    json(&serde_json::to_value(Paged::new("transaction", items)).unwrap_or_default());
+}
+
+fn transaction_of(r: &Value, kind: &str) -> Option<Transaction> {
+    Some(Transaction {
+        date: iso_date(r.get("debitCreditTransactionDate")?.as_str()?),
+        // Signed as FPL posts it: charges positive, payments/credits negative.
+        amount: money_value(r.get("debitCreditAmount"))?,
+        description: r
+            .get("debitCreditDescriptionCode")
+            .map(scalar)
+            .filter(|s| !s.is_empty()),
+        kind: Some(kind.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -919,5 +1110,134 @@ mod tests {
             fmt_payments_list(&none).unwrap(),
             vec!["(no payments in the recent ledger)"]
         );
+    }
+
+    // ---- utility/v1 profile mapping ---------------------------------------
+
+    #[test]
+    fn iso_date_normalizes_provider_formats() {
+        assert_eq!(iso_date("2026-06-26T05:00:00.000"), "2026-06-26");
+        assert_eq!(iso_date("2026-07-17"), "2026-07-17");
+        assert_eq!(iso_date("07/28/2026"), "2026-07-28");
+        assert_eq!(iso_date("06-15-2024"), "2024-06-15");
+        // Unrecognized text passes through verbatim rather than being lost.
+        assert_eq!(
+            iso_date("Your account is paid in full."),
+            "Your account is paid in full."
+        );
+        assert_eq!(iso_date("20240615"), "20240615");
+    }
+
+    #[test]
+    fn money_value_handles_numbers_and_strings() {
+        assert_eq!(money_value(Some(&json!(196.16))).unwrap().amount, "196.16");
+        assert_eq!(
+            money_value(Some(&json!(-196.16))).unwrap().amount,
+            "-196.16"
+        );
+        assert_eq!(money_value(Some(&json!(0))).unwrap().amount, "0.00");
+        assert_eq!(
+            money_value(Some(&json!("$1,234.50"))).unwrap().amount,
+            "1234.50"
+        );
+        assert_eq!(money_value(Some(&json!(196.16))).unwrap().currency, "USD");
+        assert!(money_value(Some(&Value::Null)).is_none());
+        assert!(money_value(None).is_none());
+    }
+
+    #[test]
+    fn apply_range_filters_inclusively_and_truncates() {
+        let rows = vec![
+            json!({"dateBilled":"2026-06-26"}),
+            json!({"dateBilled":"2026-05-28T00:00:00.000"}),
+            json!({"dateBilled":"2026-04-27"}),
+            json!({"note":"no date"}),
+        ];
+        // No bounds: every row passes (including the dateless one).
+        assert_eq!(apply_range(&rows, "dateBilled", None, None, None).len(), 4);
+        // Inclusive bounds; a dateless row fails an explicit bound.
+        let hits = apply_range(
+            &rows,
+            "dateBilled",
+            Some((2026, 5, 28)),
+            Some((2026, 6, 26)),
+            None,
+        );
+        assert_eq!(hits.len(), 2);
+        // Limit truncates after filtering, preserving order (newest first).
+        let one = apply_range(&rows, "dateBilled", Some((2026, 1, 1)), None, Some(1));
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0]["dateBilled"], "2026-06-26");
+    }
+
+    #[test]
+    fn utility_summary_from_balance_row_and_detail() {
+        // `loginNew` balance row: string money, dueDateVal, own account number.
+        let bal =
+            json!({"accountNumber":"1234567890","balance":"$42.10","dueDateVal":"2026-08-01"});
+        let dto = utility_summary_dto(&bal, "999");
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["schema"], "utility-summary/v1");
+        assert_eq!(v["balance"]["amount"], "42.10");
+        assert_eq!(v["balance"]["currency"], "USD");
+        assert_eq!(v["due_date"], "2026-08-01");
+        assert_eq!(v["account"], "1234567890");
+        assert!(v.get("autopay").is_none());
+
+        // Account detail: numeric money under `data`, no due-date field.
+        let detail = json!({"data":{"accountNumber":"1234567890","balance":196.16}});
+        let v = serde_json::to_value(utility_summary_dto(&detail, "999")).unwrap();
+        assert_eq!(v["balance"]["amount"], "196.16");
+        assert!(v.get("due_date").is_none());
+
+        // Nothing recognizable: zero balance, account from the resolved id.
+        let v = serde_json::to_value(utility_summary_dto(&json!({}), "999")).unwrap();
+        assert_eq!(v["balance"]["amount"], "0.00");
+        assert_eq!(v["account"], "999");
+    }
+
+    #[test]
+    fn statement_of_maps_bill_rows_dated_ids() {
+        let r = json!({"dateBilled":"2026-06-26","totalBillAmount":196.16,
+                       "dueDate":"2026-07-17","consumptionUnit":1246});
+        let s = statement_of(&r).unwrap();
+        assert_eq!(s.id, "2026-06-26");
+        assert_eq!(s.date.as_deref(), Some("2026-06-26"));
+        assert_eq!(s.amount.amount, "196.16");
+        assert_eq!(s.due_date.as_deref(), Some("2026-07-17"));
+        assert_eq!(s.paid, None);
+        // No bill date → no id to address it by → skipped.
+        assert!(statement_of(&json!({"totalBillAmount":1.0})).is_none());
+    }
+
+    #[test]
+    fn payment_of_reports_magnitude() {
+        let r = json!({"debitCreditTransactionDate":"2026-07-07T04:00:00.000Z",
+                       "debitCreditDescriptionCode":"PYMT","debitCreditAmount":-196.16});
+        let p = payment_of(&r).unwrap();
+        assert_eq!(p.date, "2026-07-07");
+        assert_eq!(p.amount.amount, "196.16");
+        assert!(p.method.is_none() && p.status.is_none() && p.confirmation.is_none());
+        // A row without an amount can't be a payment record.
+        assert!(payment_of(&json!({"debitCreditTransactionDate":"2026-07-07"})).is_none());
+    }
+
+    #[test]
+    fn transaction_of_keeps_ledger_sign_and_kind() {
+        let r = json!({"debitCreditTransactionDate":"2026-06-26T04:00:00.000Z",
+                       "debitCreditDescriptionCode":"ELEC","debitCreditAmount":196.16});
+        let t = transaction_of(&r, "account").unwrap();
+        assert_eq!(t.date, "2026-06-26");
+        assert_eq!(t.amount.amount, "196.16");
+        assert_eq!(t.description.as_deref(), Some("ELEC"));
+        assert_eq!(t.kind.as_deref(), Some("account"));
+
+        let pymt = json!({"debitCreditTransactionDate":"2026-07-07T04:00:00.000Z",
+                          "debitCreditDescriptionCode":"PYMT","debitCreditAmount":-196.16});
+        assert_eq!(
+            transaction_of(&pymt, "account").unwrap().amount.amount,
+            "-196.16"
+        );
+        assert!(transaction_of(&json!({"debitCreditAmount":1.0}), "account").is_none());
     }
 }

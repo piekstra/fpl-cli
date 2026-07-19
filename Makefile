@@ -40,7 +40,7 @@ deps:
 smoke: release
 	./target/release/$(BIN) --version
 	./target/release/$(BIN) --help >/dev/null
-	@for grp in init set-credential auth accounts bills payments usage history profile meter alerts lookup outages api update; do \
+	@for grp in init set-credential auth config accounts bills payments usage history profile meter alerts lookup outages api update; do \
 		./target/release/$(BIN) $$grp --help >/dev/null || exit 1; \
 	done
 	@echo "smoke ok"

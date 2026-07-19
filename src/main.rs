@@ -32,6 +32,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Init(args) => commands::init::run(&ctx, args),
         Command::SetCredential(args) => commands::set_credential::run(&ctx, args),
         Command::Auth(cmd) => commands::auth::run(&ctx, cmd),
+        Command::Config(cmd) => commands::config::run(&ctx, cmd),
         Command::Summary { account_id } => commands::summary::run(&ctx, account_id.as_deref()),
         Command::Accounts(cmd) => commands::accounts::run(&ctx, cmd),
         Command::Bills(cmd) => commands::bills::run(&ctx, cmd),

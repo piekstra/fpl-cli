@@ -32,7 +32,14 @@ pub fn run(ctx: &Ctx, cmd: &AccountsCommand) -> Result<(), AppError> {
         AccountsCommand::Balance { account_id } => {
             let fpl = ctx.connect()?;
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(ctx.cli.json, &fpl.balance(&account)?, output::balance);
+            let bal = fpl.balance(&account)?;
+            if ctx.cli.json {
+                // utility/v1: the same utility-summary/v1 card as `summary` —
+                // the profile's second entry point.
+                output::utility_summary(&bal, &account);
+            } else {
+                output::balance(&bal);
+            }
         }
     }
     Ok(())

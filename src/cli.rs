@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
 pub use pk_cli_selfupdate::SelfUpdateArgs;
+pub use pk_cli_utility::RangeArgs;
 
 /// Manage your Florida Power & Light (FPL) account from the command line.
 ///
@@ -60,6 +61,10 @@ pub enum Command {
     /// Session and credential status.
     #[command(subcommand)]
     Auth(AuthCommand),
+
+    /// Non-secret settings: default username and active account.
+    #[command(subcommand)]
+    Config(ConfigCommand),
 
     /// At-a-glance dashboard: balance, bill cycle, projected bill and usage.
     Summary {
@@ -192,6 +197,18 @@ pub enum AuthCommand {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum ConfigCommand {
+    /// Print the resolved config file path.
+    Path,
+    /// Show the effective configuration.
+    Show,
+    /// Set a config key: `username` or `account`.
+    Set { key: String, value: String },
+    /// Remove a config key.
+    Unset { key: String },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum AccountsCommand {
     /// List the accounts on your login.
     #[command(alias = "ls")]
@@ -220,6 +237,8 @@ pub enum BillsCommand {
     List {
         /// Account number (defaults to active / --account).
         account_id: Option<String>,
+        #[command(flatten)]
+        range: RangeArgs,
     },
     /// Current period: projected bill, bill-to-date, daily average.
     Get {
@@ -256,6 +275,8 @@ pub enum PaymentsCommand {
     List {
         /// Account number (defaults to active / --account).
         account_id: Option<String>,
+        #[command(flatten)]
+        range: RangeArgs,
     },
     /// List saved payment methods / options.
     Methods {
@@ -312,6 +333,8 @@ pub enum HistoryCommand {
         /// Which ledger: account or deposit.
         #[arg(long, default_value = "account")]
         r#type: String,
+        #[command(flatten)]
+        range: RangeArgs,
     },
     /// List the valid `--type` values for `history list`.
     Types,

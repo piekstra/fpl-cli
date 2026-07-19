@@ -33,6 +33,11 @@ impl Config {
         store().load()
     }
 
+    /// The resolved config file path (for `fpl config path`).
+    pub fn path() -> Result<std::path::PathBuf, AppError> {
+        store().path()
+    }
+
     pub fn save(&self) -> Result<(), AppError> {
         store().save(self)
     }

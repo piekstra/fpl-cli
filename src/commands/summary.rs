@@ -12,6 +12,14 @@ pub fn run(ctx: &Ctx, account_id: Option<&str>) -> Result<(), AppError> {
     let account = ctx.resolve_account(account_id, &fpl)?;
 
     let detail = fpl.account_detail(&account)?;
+
+    // utility/v1: `--json` emits the canonical utility-summary/v1 card (no
+    // energy fetch needed). The full dashboard stays in text mode.
+    if ctx.cli.json {
+        output::utility_summary(&detail, &account);
+        return Ok(());
+    }
+
     let premise = Fpl::premise_of(&detail).ok_or_else(|| {
         AppError::NotFound("could not read the premise number from account detail".into())
     })?;
@@ -23,6 +31,6 @@ pub fn run(ctx: &Ctx, account_id: Option<&str>) -> Result<(), AppError> {
         })?;
 
     let energy = fpl.energy_usage(&account, &premise, &last_billed, &meter)?;
-    output::summary(ctx.cli.json, &detail, &energy);
+    output::summary_text(&detail, &energy);
     Ok(())
 }

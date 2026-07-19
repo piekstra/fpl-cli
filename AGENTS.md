@@ -43,10 +43,14 @@ before touching `src/client.rs`.
 - **Mutation safety.** `payments create` moves money — confirm by default, skip
   with `--force` (NOT `--yes`). A non-TTY run without `--force` fails with a hint.
 - **Output: text is primary.** Resource reads render `Key: value` blocks and
-  pipe-delimited (`ALL_CAPS`) tables. JSON is control-plane only
-  (`init`/`set-credential` results, `auth status --json`, and the raw `api`
-  payload). Do **not** add `--json` to resource reads. Data → stdout,
-  diagnostics/confirmations → stderr.
+  pipe-delimited (`ALL_CAPS`) tables. `--json` on the utility/v1 profile
+  commands (`summary`, `accounts balance`, `bills list`, `payments list`,
+  `history list`) emits the canonical DTOs from `pk-cli-utility`, mapped in
+  `src/output.rs` at the emission layer only — handlers keep passing raw
+  provider JSON. Elsewhere `--json` is the raw FPL payload or a control-plane
+  DTO (`init`/`set-credential` results, `auth status`, `info`, `api`). Data →
+  stdout, diagnostics/confirmations → stderr. Never reword the text labels
+  `Balance:` / `Due:` — drivers parse them.
 - **Exit codes are a contract:** `0` ok, `1` other/keychain, `2` usage, `3`
   auth, `4` not found, `5` network. See `error.rs`.
 - **Best-effort parsing.** FPL shapes vary by account type and drift. Never
@@ -75,7 +79,11 @@ This CLI conforms to **piekstra-cli/1** — the shared surface spec in
 [piekstra/cli-common](https://github.com/piekstra/cli-common) (`DESIGN.md`):
 standard `auth` / `config` / `self-update` / `completions` / `info` commands,
 global `--json`, canonical DTOs (`auth-status/v1`, `self-update/v1`,
-`cli-info/v1`), and frozen exit codes 0–6.
+`cli-info/v1`), and frozen exit codes 0–6. It also declares the **utility/v1
+domain profile** (SPEC v1.1 §1.8, crate `pk-cli-utility`) via `fpl info`:
+`summary`/`accounts balance` emit `utility-summary/v1`, and the profile list
+commands emit `Paged` `<record>-list/v1` envelopes with `--limit`/`--since`/
+`--until` range flags.
 
 - **Don't fork shared behavior.** Error/exit-code handling, output rendering,
   keychain secrets, config storage, and self-update come from the `pk-cli-*`
