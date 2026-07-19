@@ -648,6 +648,7 @@ dependencies = [
 name = "fpl-cli"
 version = "0.2.3"
 dependencies = [
+ "base64",
  "clap",
  "clap_complete",
  "pk-cli-auth",

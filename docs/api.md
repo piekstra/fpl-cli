@@ -52,6 +52,7 @@ premise number from account detail.
 | `bills list` | GET | `/cs/customer/v1/sumbillaccount/resources/account/{account}/bill-history` |
 | `bills projected` | GET | `/cs/customer/v1/accountservices/resources/account/{account}/projectedBill?premiseNumber={premise}&lastBilledDate={MMDDYYYY}` |
 | `bills budget` | GET | `/cs/customer/v1/budgetbillingapi/resources/account/{account}/budgetBillingGraph` |
+| `bills download` | GET | `/cs/customer/v1/documentretrieval/resources/account/{account}/download?…` (bill PDF, base64 in `data.bytes`) |
 | `bills get` / `usage get` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-energy-service` |
 | `usage hourly` | POST | `/cs/customer/v1/energydashboard/resources/energy-usage/account/{account}/mobile-hourly-usage` |
 | `usage appliances` | POST | `/cs/customer/v1/energyanalyzer/resources/{account}/getDisaggResp` |
@@ -66,13 +67,27 @@ and `sortBy` query parameters together — omit any and they return `400`. The
 dedicated `/balance` endpoint has similar pagination requirements and is
 inconsistent, so `accounts balance` reads the per-account balance fields
 (`balance`, `actualBalance`, `dueDateVal`) off the `loginNew` list instead.
-**Document retrieval is not yet mapped.** Both document history
-(`/documentretrieval/…/document-history`, every path variant returns `404`) and
-the bill-PDF download (`/documentretrieval/…/download`, returns `555 "No file
-path available in DB"` for every `billDate` format) appear to need a document
-reference the web app derives elsewhere. Until that's mapped, there's no
-`history --type document` or `bills download`; `bills list` still gives every
-bill's amounts, dates, and usage as text.
+**Bill-PDF retrieval (`bills download`) is mapped and verified.** It's a single
+authenticated GET — no document-history call needed for bills. `bills download`
+reads the target bill's `dateBilled` / `datePrint` from `bill-history`, strips
+the dashes, and calls the download endpoint with the query the web `viewbill`
+app builds:
+
+```
+GET /cs/customer/v1/documentretrieval/resources/account/{account}/download
+      ?channel=WEB&jobType=BL&requestedDocType=PDF&billAccountNumber={account}
+      &billDate={YYYYMMDD}&printDate={YYYYMMDD}&fileName=billPdf-{YYYYMMDD}.pdf
+      &docPathEncryptDecryptRequired=true&requestFor=ViewBillPdfRequest
+```
+
+The response is JSON: `{ data: { bytes: "<base64 PDF>", documentPath, patternMatchFound, … } }`.
+Base64-decode `data.bytes` to get the PDF. The earlier `555 "No file path
+available in DB"` was simply the download called without the `requestedDocType`,
+`requestFor`, and `fileName` params. The separate **`document-history`** service
+(a *`PUT`* to `/documentretrieval/resources/account/{account}/document-history/{account}`
+— note the account appears twice — with a `billHistorys` body) lists all
+downloadable documents including final notices; it's not needed for plain bill
+PDFs, so it isn't wrapped.
 
 ### Request-body notes
 

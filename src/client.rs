@@ -421,6 +421,28 @@ impl Fpl {
         ))
     }
 
+    /// Fetch a bill statement PDF. `date_billed` / `date_print` come from a
+    /// `bill-history` row (`YYYY-MM-DD`); FPL wants them dash-stripped. The
+    /// response is `{ data: { bytes: "<base64 PDF>", … } }`.
+    pub fn download_bill(
+        &self,
+        account: &str,
+        date_billed: &str,
+        date_print: &str,
+    ) -> Result<Value, AppError> {
+        // All values are URL-safe (digits / fixed ASCII tokens).
+        let bill_date = date_billed.replace('-', "");
+        let print_date = date_print.replace('-', "");
+        let query = format!(
+            "channel=WEB&jobType=BL&requestedDocType=PDF&billAccountNumber={account}\
+             &billDate={bill_date}&printDate={print_date}&fileName=billPdf-{print_date}.pdf\
+             &docPathEncryptDecryptRequired=true&requestFor=ViewBillPdfRequest"
+        );
+        self.get(&format!(
+            "/cs/customer/v1/documentretrieval/resources/account/{account}/download?{query}"
+        ))
+    }
+
     pub fn projected_bill(
         &self,
         account: &str,

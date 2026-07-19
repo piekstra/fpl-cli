@@ -236,6 +236,17 @@ pub enum BillsCommand {
         /// Account number (defaults to active / --account).
         account_id: Option<String>,
     },
+    /// Download a bill statement PDF.
+    Download {
+        /// Account number (defaults to active / --account).
+        account_id: Option<String>,
+        /// Bill date to download as YYYY-MM-DD (default: the most recent bill).
+        #[arg(long)]
+        date: Option<String>,
+        /// Write the PDF here (default: ./fpl-bill-<account>-<date>.pdf; `-` for stdout).
+        #[arg(long, short)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

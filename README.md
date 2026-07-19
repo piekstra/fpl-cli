@@ -95,7 +95,13 @@ fpl bills get [account-id]        # this period: projected bill, bill-to-date, d
 fpl bills projected [account-id]  # projected end-of-cycle bill
 fpl bills list [account-id]       # prior bills (amounts, dates, usage)
 fpl bills budget [account-id]     # Budget Billing plan status + monthly graph
+fpl bills download [account-id]   # save a bill statement PDF (latest, or --date)
 ```
+
+`fpl bills download` fetches a bill statement as a PDF. It defaults to the most
+recent bill; pass `--date YYYY-MM-DD` (a date from `bills list`) for an older
+one. The PDF is written to `./fpl-bill-<account>-<date>.pdf` by default, or use
+`-o <path>` (`-o -` streams it to stdout, e.g. `fpl bills download -o - | open -f -a Preview`).
 
 ### Payments
 
