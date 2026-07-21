@@ -6,6 +6,7 @@ pub mod alerts;
 pub mod api;
 pub mod auth;
 pub mod bills;
+pub mod config;
 pub mod history;
 pub mod init;
 pub mod lookup;
@@ -71,9 +72,11 @@ pub fn info(_ctx: &Ctx) -> Result<(), AppError> {
             login_hint: Some("fpl auth login".into()),
         },
         &[
-            "accounts", "bills", "payments", "usage", "history", "outages", "lookup", "api",
+            "summary", "accounts", "bills", "payments", "usage", "history", "outages", "lookup",
+            "config", "api",
         ],
-    );
+    )
+    .with_profiles(&[pk_cli_utility::PROFILE]);
     crate::output::json(&serde_json::to_value(&info).unwrap_or_default());
     Ok(())
 }

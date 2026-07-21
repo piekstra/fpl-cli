@@ -76,7 +76,8 @@ Projected use   1389 kWh  ·  651 kWh so far        ·  ~43 kWh/day
 ```
 
 `fpl summary [account-id]` is the daily-driver dashboard — balance, bill cycle,
-and projected bill/usage in one call. `--json` emits a structured payload.
+and projected bill/usage in one call. `--json` emits the canonical
+`utility-summary/v1` card (see [Output & scripting](#output--scripting)).
 
 ### Accounts & profile
 
@@ -88,12 +89,24 @@ fpl accounts balance [account-id] # current balance and due date
 fpl profile [account-id]          # account holder: name, email, phone, mailing address
 ```
 
+### Config
+
+```sh
+fpl config show                   # effective non-secret settings
+fpl config set account 1234567890 # keys: username, account
+fpl config unset account
+fpl config path                   # where the config file lives
+```
+
+The config file holds only non-secret preferences — the password lives in the
+OS keychain (`fpl init` / `fpl set-credential`).
+
 ### Bills
 
 ```sh
 fpl bills get [account-id]        # this period: projected bill, bill-to-date, daily avg
 fpl bills projected [account-id]  # projected end-of-cycle bill
-fpl bills list [account-id]       # prior bills (amounts, dates, usage)
+fpl bills list [account-id]       # prior bills (--limit/--since/--until to narrow)
 fpl bills budget [account-id]     # Budget Billing plan status + monthly graph
 fpl bills download [account-id]   # save a bill statement PDF (latest, or --date)
 ```
@@ -106,7 +119,7 @@ one. The PDF is written to `./fpl-bill-<account>-<date>.pdf` by default, or use
 ### Payments
 
 ```sh
-fpl payments list [account-id]    # payments from the account ledger
+fpl payments list [account-id]    # payments from the ledger (--limit/--since/--until)
 fpl payments methods [account-id] # saved payment methods / options (bank on file)
 fpl payments create --amount 123.45              # make a payment (asks to confirm)
 fpl payments create --amount 123.45 --date 2026-08-01 --force
@@ -139,6 +152,7 @@ fpl usage appliances [account-id]          # appliance-level (disaggregated) bre
 ```sh
 fpl history list [account-id]                 # account ledger (default --type account)
 fpl history list [account-id] --type deposit  # deposit history
+fpl history list --since 2026-01-01 --limit 5 # range flags work on any ledger
 fpl history types                             # valid --type values
 ```
 
@@ -206,9 +220,14 @@ for agents and tooling that introspect the CLI before driving it.
 
 **Text is the default.** Resource reads render `Key: value` blocks and
 pipe-delimited tables (`ALL_CAPS` headers) — token-dense and parseable without
-JSON. JSON is reserved for control-plane signals: `init`/`set-credential`
-results (`--json`), `auth status --json`, and `fpl api` (always JSON). For the
-raw structure of a resource read, pipe it through `fpl api`.
+JSON. `--json` switches the profile commands to the shared **utility/v1** DTOs
+from [cli-common](https://github.com/piekstra/cli-common): `summary` and
+`accounts balance` emit a `utility-summary/v1` card, and `bills list`,
+`payments list`, and `history list` emit `<record>-list/v1` envelopes with the
+rows under `items` (narrow them with `--limit`/`--since`/`--until`). Elsewhere
+`--json` is the raw FPL payload or a control-plane DTO (`auth status`, `info`,
+and `fpl api`, which is always JSON). For the raw structure of a resource
+read, pipe it through `fpl api`.
 
 Data goes to stdout; diagnostics and confirmations go to stderr.
 

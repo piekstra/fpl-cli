@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::cli::BillsCommand;
 use crate::client::Fpl;
@@ -12,15 +12,39 @@ use crate::error::AppError;
 use crate::output;
 
 pub fn run(ctx: &Ctx, cmd: &BillsCommand) -> Result<(), AppError> {
+    // Validate range flags before opening a session — a usage error should
+    // fail fast, without touching the keychain or the network.
+    let bounds = match cmd {
+        BillsCommand::List { range, .. } => Some(output::range_bounds(range)?),
+        _ => None,
+    };
     let fpl = ctx.connect()?;
     match cmd {
-        BillsCommand::List { account_id } => {
+        BillsCommand::List { account_id, range } => {
+            let (since, until) = bounds.unwrap_or_default();
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(
-                ctx.cli.json,
-                &fpl.bill_history(&account)?,
-                output::bills_list,
-            );
+            let history = fpl.bill_history(&account)?;
+            // Rows nest under `data.data`; tolerate a flat `data` array too
+            // (mirroring the text renderer's fallback).
+            let rows = history
+                .pointer("/data/data")
+                .and_then(Value::as_array)
+                .or_else(|| history.get("data").and_then(Value::as_array));
+            match rows {
+                Some(rows) => {
+                    let rows = output::apply_range(rows, "dateBilled", since, until, range.limit);
+                    if ctx.cli.json {
+                        // utility/v1: statement-list/v1 envelope.
+                        output::statements(&rows);
+                    } else {
+                        output::bills_list(&json!({ "data": { "data": rows } }));
+                    }
+                }
+                // Shape drift: keep the schema promise (an empty list) in JSON
+                // mode and the old fallback rendering in text mode.
+                None if ctx.cli.json => output::statements(&[]),
+                None => output::bills_list(&history),
+            }
         }
         BillsCommand::Get { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;

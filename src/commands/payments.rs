@@ -24,15 +24,44 @@ use crate::error::AppError;
 use crate::output;
 
 pub fn run(ctx: &Ctx, cmd: &PaymentsCommand) -> Result<(), AppError> {
+    // Validate range flags before opening a session — a usage error should
+    // fail fast, without touching the keychain or the network.
+    let bounds = match cmd {
+        PaymentsCommand::List { range, .. } => Some(output::range_bounds(range)?),
+        _ => None,
+    };
     let fpl = ctx.connect()?;
     match cmd {
-        PaymentsCommand::List { account_id } => {
+        PaymentsCommand::List { account_id, range } => {
+            let (since, until) = bounds.unwrap_or_default();
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
-            output::emit(
-                ctx.cli.json,
-                &fpl.account_history(&account)?,
-                output::payments_list,
-            );
+            let ledger = fpl.account_history(&account)?;
+            match ledger.get("data").and_then(Value::as_array) {
+                Some(rows) => {
+                    let pymts: Vec<Value> = rows
+                        .iter()
+                        .filter(|r| output::is_payment_row(r))
+                        .cloned()
+                        .collect();
+                    let rows = output::apply_range(
+                        &pymts,
+                        "debitCreditTransactionDate",
+                        since,
+                        until,
+                        range.limit,
+                    );
+                    if ctx.cli.json {
+                        // utility/v1: payment-list/v1 envelope.
+                        output::payments(&rows);
+                    } else {
+                        output::payments_list(&json!({ "data": rows }));
+                    }
+                }
+                // Shape drift: keep the schema promise (an empty list) in JSON
+                // mode and the old fallback rendering in text mode.
+                None if ctx.cli.json => output::payments(&[]),
+                None => output::payments_list(&ledger),
+            }
         }
         PaymentsCommand::Methods { account_id } => {
             let account = ctx.resolve_account(account_id.as_deref(), &fpl)?;
