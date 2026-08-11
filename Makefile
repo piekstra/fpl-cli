@@ -9,11 +9,15 @@ CARGO := cargo
 
 all: verify
 
+build: SIGN_TARGET = target/debug/$(BIN)
 build:
 	$(CARGO) build
+	@$(SIGN)
 
+release: SIGN_TARGET = target/release/$(BIN)
 release:
 	$(CARGO) build --release
+	@$(SIGN)
 
 test:
 	$(CARGO) test --all
