@@ -71,6 +71,6 @@ dev:
 # absent (CI, Linux, a fresh machine that hasn't run setup-dev-signing.sh).
 define SIGN
 if [ -x "$$HOME/Dev/cli-common/scripts/dev-sign.sh" ]; then \
-	"$$HOME/Dev/cli-common/scripts/dev-sign.sh" $(SIGN_TARGET); \
+	"$$HOME/Dev/cli-common/scripts/dev-sign.sh" "$(SIGN_TARGET)"; \
 else echo "cli-common/scripts/dev-sign.sh not found — $(SIGN_TARGET) left ad-hoc signed"; fi
 endef
