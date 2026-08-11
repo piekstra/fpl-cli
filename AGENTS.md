@@ -95,8 +95,9 @@ commands emit `Paged` `<record>-list/v1` envelopes with `--limit`/`--since`/
 - **Surface changes are spec changes.** A new standard command, flag, DTO
   field, or exit code belongs in cli-common's `DESIGN.md` first; update
   `conformance.md` alongside.
-- **macOS dev signing.** Every plain `cargo build` gets a fresh ad-hoc code
-  signature, so keychain "Always Allow" grants don't stick and every rebuild
-  re-prompts. One-time: run cli-common's `scripts/setup-dev-signing.sh`. Then
-  build with `make dev` (build + re-sign with the stable `pk-cli-codesign`
-  identity) whenever you'll exercise keychain-touching commands.
+- **macOS dev signing.** Every plain `cargo build` — and every `cargo install`
+  — gets a fresh ad-hoc code signature, so keychain "Always Allow" grants don't
+  stick and every rebuild or reinstall re-prompts. One-time: run cli-common's
+  `scripts/setup-dev-signing.sh`. After that, both `make dev` and `make install`
+  re-sign with the stable `pk-cli-codesign` identity, so a single grant holds
+  across every future build and install.
