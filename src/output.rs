@@ -697,7 +697,7 @@ pub(crate) fn is_payment_row(r: &Value) -> bool {
 /// Normalize an FPL date string to ISO `YYYY-MM-DD`: ISO datetimes are
 /// truncated, `MM/DD/YYYY` / `MM-DD-YYYY` are converted, and unrecognized
 /// text passes through verbatim (profile contract).
-fn iso_date(s: &str) -> String {
+pub(crate) fn iso_date(s: &str) -> String {
     let t = s.trim();
     let b = t.as_bytes();
     let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);

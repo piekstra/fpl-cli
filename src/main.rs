@@ -36,6 +36,7 @@ fn run(cli: Cli) -> Result<(), AppError> {
         Command::Summary { account_id } => commands::summary::run(&ctx, account_id.as_deref()),
         Command::Accounts(cmd) => commands::accounts::run(&ctx, cmd),
         Command::Bills(cmd) => commands::bills::run(&ctx, cmd),
+        Command::Documents(cmd) => commands::documents::run(&ctx, cmd),
         Command::Payments(cmd) => commands::payments::run(&ctx, cmd),
         Command::Usage(cmd) => commands::usage::run(&ctx, cmd),
         Command::History(cmd) => commands::history::run(&ctx, cmd),

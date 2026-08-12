@@ -80,6 +80,10 @@ pub enum Command {
     #[command(subcommand)]
     Bills(BillsCommand),
 
+    /// Statement documents: list and download bill PDFs (documents/v1 profile).
+    #[command(subcommand)]
+    Documents(DocumentsCommand),
+
     /// Payments: history, saved methods, and making a payment.
     #[command(subcommand)]
     Payments(PaymentsCommand),
@@ -263,6 +267,33 @@ pub enum BillsCommand {
         #[arg(long)]
         date: Option<String>,
         /// Write the PDF here (default: ./fpl-bill-<account>-<date>.pdf; `-` for stdout).
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+}
+
+/// Statement documents (documents/v1). FPL addresses statements by bill date,
+/// so a document's id is its ISO bill date — `documents download 2026-03-15`
+/// is the same statement as `bills download --date 2026-03-15`.
+#[derive(Subcommand, Debug)]
+pub enum DocumentsCommand {
+    /// List statement documents, newest first (document-list/v1).
+    #[command(alias = "ls")]
+    List {
+        #[command(flatten)]
+        range: RangeArgs,
+    },
+    /// Download a statement PDF by id (its bill date), or every one with --all.
+    #[command(alias = "get")]
+    Download {
+        /// Document id from `documents list` — the bill date, `YYYY-MM-DD`.
+        /// Omit to take the most recent; use `--all` for every statement.
+        id: Option<String>,
+        /// Download every statement (write to a directory with `-o`).
+        #[arg(long, conflicts_with = "id")]
+        all: bool,
+        /// Write here: a file or `-` for stdout (single id), or a directory
+        /// (with `--all`). Default: `./fpl-bill-<account>-<date>.pdf`.
         #[arg(long, short)]
         output: Option<String>,
     },
