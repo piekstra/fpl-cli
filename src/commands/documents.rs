@@ -139,12 +139,22 @@ fn download_all(ctx: &Ctx, fpl: &Fpl, account: &str, out: Option<&str>) -> Resul
     }
 
     let mut saved = Vec::with_capacity(rows.len());
+    let mut failed: Vec<String> = Vec::new();
     for row in &rows {
         let Ok((date_billed, date_print)) = bill_dates(row) else {
             continue; // no dateBilled → nothing to fetch
         };
-        let pdf = bills::bill_pdf(fpl, account, &date_billed, &date_print)?;
         let iso = output::iso_date(&date_billed);
+        // FPL may not have every historical statement on file; a single missing
+        // one must not abort the batch (and strand the files already written).
+        // Skip it, record the date, and report the skips at the end.
+        let pdf = match bills::bill_pdf(fpl, account, &date_billed, &date_print) {
+            Ok(pdf) => pdf,
+            Err(_) => {
+                failed.push(iso);
+                continue;
+            }
+        };
         let name = default_name(account, &iso);
         let path = if dir.as_os_str().is_empty() {
             PathBuf::from(&name)
@@ -174,6 +184,15 @@ fn download_all(ctx: &Ctx, fpl: &Fpl, account: &str, out: Option<&str>) -> Resul
                 batch.count, batch.bytes_total, batch.dir
             );
         }
+    }
+    // Diagnostics on stderr keep stdout (the DTO / the paths) clean. Not in the
+    // document-download-batch/v1 DTO, which reports only what was written.
+    if !failed.is_empty() && !ctx.cli.quiet {
+        eprintln!(
+            "skipped {} statement(s) FPL had no PDF for: {}",
+            failed.len(),
+            failed.join(", ")
+        );
     }
     Ok(())
 }
@@ -245,5 +264,26 @@ mod tests {
     #[test]
     fn a_row_without_a_date_is_skipped_not_panicked() {
         assert!(document_of(&json!({"totalBillAmount": 10.0})).is_none());
+    }
+
+    #[test]
+    fn an_iso_id_matches_a_datebilled_carrying_a_time_tail() {
+        // The headline fix: an id from `documents list` (`2026-03-15`) must
+        // resolve a row whose raw dateBilled is `2026-03-15T00:00:00.000`, which
+        // is why `download_one` matches on the ISO-normalized date, not the raw.
+        let rows = [
+            json!({"dateBilled": "2026-04-27"}),
+            json!({"dateBilled": "2026-03-15T00:00:00.000"}),
+        ];
+        assert_eq!(iso_of(&rows[1]).as_deref(), Some("2026-03-15"));
+        let found = rows
+            .iter()
+            .find(|r| iso_of(r).as_deref() == Some("2026-03-15"));
+        assert!(found.is_some(), "ISO id resolves the time-tailed row");
+        // A raw-string compare (the pre-fix behavior) would miss it.
+        assert_ne!(
+            rows[1].get("dateBilled").and_then(Value::as_str),
+            Some("2026-03-15")
+        );
     }
 }
