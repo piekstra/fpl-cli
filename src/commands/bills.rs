@@ -111,21 +111,7 @@ fn download(
         .ok_or_else(|| AppError::Other("bill row is missing dateBilled".into()))?;
     let date_print = field(bill, "datePrint").unwrap_or_else(|| date_billed.clone());
 
-    let resp = fpl.download_bill(account, &date_billed, &date_print)?;
-    let b64: String = resp
-        .pointer("/data/bytes")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Upstream("bill download returned no PDF data".into()))?
-        .split_whitespace()
-        .collect();
-    let pdf = STANDARD
-        .decode(b64)
-        .map_err(|e| AppError::Other(format!("could not decode the bill PDF: {e}")))?;
-    if !pdf.starts_with(b"%PDF") {
-        return Err(AppError::Upstream(
-            "bill download did not return a PDF (FPL may not have this statement on file)".into(),
-        ));
-    }
+    let pdf = bill_pdf(fpl, account, &date_billed, &date_print)?;
 
     // `-o -` streams the raw PDF to stdout; otherwise write a file.
     if output == Some("-") {
@@ -156,4 +142,31 @@ fn download(
         }
     }
     Ok(())
+}
+
+/// Fetch and decode one bill statement PDF. Shared by `bills download` and the
+/// `documents` profile surface. Returns the verified PDF bytes (or an upstream
+/// error if FPL has no statement on file for that date).
+pub(crate) fn bill_pdf(
+    fpl: &Fpl,
+    account: &str,
+    date_billed: &str,
+    date_print: &str,
+) -> Result<Vec<u8>, AppError> {
+    let resp = fpl.download_bill(account, date_billed, date_print)?;
+    let b64: String = resp
+        .pointer("/data/bytes")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Upstream("bill download returned no PDF data".into()))?
+        .split_whitespace()
+        .collect();
+    let pdf = STANDARD
+        .decode(b64)
+        .map_err(|e| AppError::Other(format!("could not decode the bill PDF: {e}")))?;
+    if !pdf.starts_with(b"%PDF") {
+        return Err(AppError::Upstream(
+            "bill download did not return a PDF (FPL may not have this statement on file)".into(),
+        ));
+    }
+    Ok(pdf)
 }
