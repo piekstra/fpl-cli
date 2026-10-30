@@ -21,7 +21,7 @@ and a stable exit-code contract. Endpoint mapping is in
 ## Install
 
 ```sh
-make install          # cargo install --path . → the `fpl` binary on your PATH
+make install          # cargo install --path . --locked → the `fpl` binary on your PATH
 # or
 cargo build --release # binary at ./target/release/fpl
 ```
