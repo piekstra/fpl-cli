@@ -95,6 +95,12 @@ fn login_failure(status: u16) -> AppError {
     AppError::Upstream(format!("FPL login failed (HTTP {status})."))
 }
 
+/// The client a session uses. The session JWT is FPL's own header, which reqwest
+/// keeps on every hop, so a redirect to another host is refused.
+fn session_client() -> Result<reqwest::blocking::Client, AppError> {
+    build_client(same_host_redirects())
+}
+
 /// Turn a service path into a full URL. Accepts either an absolute URL or a
 /// leading-slash path relative to [`API_HOST`]. An absolute URL is what `fpl api`
 /// passes through, and the session JWT goes with every request, so it must be
@@ -113,8 +119,7 @@ fn url_for(path: &str) -> Result<String, AppError> {
 impl Fpl {
     /// Authenticate with FPL and capture the session JWT + cookies.
     pub fn login(username: &str, password: &Secret) -> Result<Fpl, AppError> {
-        // The session JWT is FPL's own header, which reqwest keeps on every hop.
-        let client = build_client(same_host_redirects())?;
+        let client = session_client()?;
         let resp = client
             .get(url_for(LOGIN_PATH)?)
             .basic_auth(username, Some(password.expose()))
@@ -594,8 +599,12 @@ impl Fpl {
 
 /// Fetch the public county outage feed (no auth required).
 pub fn county_outages() -> Result<Value, AppError> {
+    county_outages_from(OUTAGE_COUNTY_URL)
+}
+
+fn county_outages_from(url: &str) -> Result<Value, AppError> {
     let client = build_client(secure_redirects())?;
-    let resp = client.get(OUTAGE_COUNTY_URL).send()?;
+    let resp = client.get(url).send()?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!(
             "outage feed HTTP {}",
@@ -609,6 +618,98 @@ pub fn county_outages() -> Result<Value, AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A stub on 127.0.0.1. Answers each request with `respond(request)` as a raw
+    /// HTTP response, and keeps each request so a test can see what arrived.
+    fn stub(
+        respond: impl Fn(&str) -> String + Send + 'static,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let request = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    let complete = text.split_once("\r\n\r\n").is_some_and(|(head, body)| {
+                        let length = head
+                            .lines()
+                            .find_map(|l| {
+                                let (name, value) = l.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        body.len() >= length
+                    });
+                    if n == 0 || complete {
+                        break text;
+                    }
+                };
+                let response = respond(&request);
+                log.lock().unwrap().push(request);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (base, seen)
+    }
+
+    fn redirect_to(location: &str) -> String {
+        format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    }
+
+    fn ok_json(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn session() -> Fpl {
+        Fpl {
+            client: session_client().unwrap(),
+            jwt: "dummy-jwt".into(),
+        }
+    }
+
+    #[test]
+    fn a_redirect_to_another_host_is_refused_and_the_jwt_stays_here() {
+        let (other, reached) = stub(|_| ok_json("{}"));
+        let target = format!("{other}/next");
+        let (base, seen) = stub(move |_| redirect_to(&target));
+        let err = session().get(&format!("{base}/start")).unwrap_err();
+        assert!(err.to_string().contains("another host"), "{err}");
+        assert!(seen.lock().unwrap()[0].contains("dummy-jwt"));
+        assert!(reached.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_redirect_on_the_same_host_is_followed() {
+        let (base, seen) = stub(|request| {
+            if request.starts_with("GET /start") {
+                redirect_to("/next")
+            } else {
+                ok_json(r#"{"ok":true}"#)
+            }
+        });
+        let v = session().get(&format!("{base}/start")).unwrap();
+        assert_eq!(v, json!({"ok": true}));
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_outage_feed_refuses_a_redirect_that_leaves_https() {
+        let (base, _) = stub(|_| redirect_to("http://outages.example.invalid/feed"));
+        let err = county_outages_from(&format!("{base}/feed")).unwrap_err();
+        assert!(err.to_string().contains("leaves https"), "{err}");
+    }
 
     #[test]
     fn a_login_failure_other_than_401_is_upstream_not_auth() {

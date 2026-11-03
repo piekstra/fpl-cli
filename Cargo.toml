@@ -2,7 +2,7 @@
 name = "fpl-cli"
 version = "0.5.1"
 edition = "2021"
-# pk-cli-auth (cli-common v0.21.0) needs 1.89.
+# pk-cli-auth needs 1.89.
 rust-version = "1.89"
 description = "Manage your Florida Power & Light account from the command line — Keychain-secured, agent-friendly. Work in progress."
 license = "MIT OR Apache-2.0"

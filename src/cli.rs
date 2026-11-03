@@ -403,7 +403,8 @@ pub enum OutagesCommand {
 pub struct ApiArgs {
     /// HTTP method: GET, POST, PUT, or DELETE.
     pub method: String,
-    /// Path (leading slash, relative to https://www.fpl.com) or full URL.
+    /// Path (leading slash, relative to https://www.fpl.com), or a full https://
+    /// URL (http:// only to this machine).
     pub path: String,
     /// Request body as a JSON string (for POST/PUT).
     #[arg(long)]
