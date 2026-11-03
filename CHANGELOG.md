@@ -11,6 +11,7 @@
   x86_64 tarball.
 - `fpl mcp` reads `$FPL_PASSWORD` before the keychain, so an extension can pass the
   password from its settings. Every other command still reads only the keychain.
+- `fpl mcp` reads the config on each call, not at start.
 - `self-update` says to restart a running `fpl mcp --http` and to install the new
   `.mcpb`.
 - Sign-in: only a 401 from FPL's login is now exit 3. Any other failing status (a 5xx,

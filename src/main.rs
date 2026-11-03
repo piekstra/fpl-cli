@@ -24,10 +24,10 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), AppError> {
-    let cfg = Config::load()?;
     if let Command::Mcp(args) = &cli.command {
-        return pk_cli_mcp::run(args, mcp::tools(&cli, &cfg));
+        return pk_cli_mcp::run(args, mcp::tools(&cli));
     }
+    let cfg = Config::load()?;
     let ctx = Ctx {
         cli: &cli,
         cfg: &cfg,

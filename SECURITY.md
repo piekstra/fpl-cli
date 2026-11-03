@@ -42,7 +42,8 @@ core security concern:
 `fpl mcp` serves read-only tools to an MCP client (Claude Code, Claude Desktop) over
 stdio; the server opens no port unless run with `--http` (below). **What the tools
 return goes to Claude on every path**, as part of your conversation: your balance,
-due date, bills, payments, electricity use and service address.
+due date, bills, payments, electricity use, service address and, where a tool lists
+accounts or the detailed format is asked for, the account number.
 
 It signs in to fpl.com with the stored password, as every command does, and keeps the
 session in memory while it runs. A tool never prompts and never creates or changes a

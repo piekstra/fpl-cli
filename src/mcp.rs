@@ -22,6 +22,8 @@ use pk_cli_utility::mcp::{UtilityAccount, UtilitySource, UtilityTools};
 use pk_cli_utility::{Payment, Statement, UsagePeriod, UtilitySummary};
 use serde_json::Value;
 
+use pk_cli_secrets::{KeychainRead, SecretResolver, SecretSpec};
+
 use crate::cli::Cli;
 use crate::client::{AccountSummary, Fpl};
 use crate::commands::{LEGACY_SERVICE, SERVICE};
@@ -34,18 +36,13 @@ use crate::secrets::{CredentialStore, Secret};
 /// Desktop extension can pass what its settings hold.
 const PASSWORD_ENV: &str = "FPL_PASSWORD";
 
-/// The tools `fpl mcp` serves.
-pub fn tools(cli: &Cli, cfg: &Config) -> UtilityTools<FplSource<LivePortal>> {
+/// The tools `fpl mcp` serves. Nothing here reads the config: listing the tools
+/// touches no file, and a server left running sees the sign-in the user does next.
+pub fn tools(cli: &Cli) -> UtilityTools<FplSource<LivePortal>> {
     let source = FplSource {
-        portal: LivePortal::new(cli.username.clone().or_else(|| cfg.username.clone())),
-        default_account: cli
-            .account
-            .clone()
-            .or_else(|| cfg.account.clone())
-            .filter(|a| !a.is_empty()),
+        portal: LivePortal::new(cli.username.clone(), cli.account.clone()),
     };
-    let password_in_env = std::env::var(PASSWORD_ENV).is_ok_and(|v| !v.is_empty());
-    with_source(source, password_in_env)
+    with_source(source, std::env::var_os(PASSWORD_ENV).is_some())
 }
 
 fn with_source<P: Portal>(
@@ -72,6 +69,8 @@ fn with_source<P: Portal>(
 
 /// The FPL reads the tools need. The JSON is FPL's own, as `output.rs` maps it.
 pub trait Portal {
+    /// `--account`, `$FPL_ACCOUNT`, or the config's active account.
+    fn default_account(&self) -> Result<Option<String>, AppError>;
     fn accounts(&self) -> Result<Vec<AccountSummary>, AppError>;
     fn account_detail(&self, account: &str) -> Result<Value, AppError>;
     fn bill_history(&self, account: &str) -> Result<Value, AppError>;
@@ -80,7 +79,10 @@ pub trait Portal {
 
 /// `Portal` over fpl.com.
 pub struct LivePortal {
+    /// `--username` or `$FPL_USERNAME`, which win over the config.
     username: Option<String>,
+    /// `--account` or `$FPL_ACCOUNT`, likewise.
+    account: Option<String>,
     state: Mutex<SignIn<Fpl>>,
 }
 
@@ -153,35 +155,35 @@ impl<S> SignIn<S> {
 }
 
 impl LivePortal {
-    fn new(username: Option<String>) -> Self {
+    fn new(username: Option<String>, account: Option<String>) -> Self {
         Self {
             username: username.filter(|u| !u.is_empty()),
+            account: account.filter(|a| !a.is_empty()),
             state: Mutex::default(),
         }
     }
 
     fn read<T>(&self, op: impl Fn(&Fpl) -> Result<T, AppError>) -> Result<T, AppError> {
-        let username = self
-            .username
-            .as_deref()
-            .ok_or_else(|| AppError::Auth("no FPL username is configured".into()))?;
+        let username = username_from(self.username.as_deref(), Config::load)?;
         self.state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .read(
-                || {
-                    password_from(std::env::var(PASSWORD_ENV).ok(), || read_keychain(username))?
-                        .ok_or_else(|| {
-                            AppError::Auth(format!("no stored password for {username:?}"))
-                        })
-                },
-                |password| Fpl::login(username, password),
+                || resolve_password(&Keychain, PASSWORD_ENV, &username),
+                |password| Fpl::login(&username, password),
                 op,
             )
     }
 }
 
 impl Portal for LivePortal {
+    fn default_account(&self) -> Result<Option<String>, AppError> {
+        Ok(match &self.account {
+            Some(account) => Some(account.clone()),
+            None => Config::load()?.account.filter(|a| !a.is_empty()),
+        })
+    }
+
     fn accounts(&self) -> Result<Vec<AccountSummary>, AppError> {
         self.read(Fpl::accounts)
     }
@@ -199,37 +201,65 @@ impl Portal for LivePortal {
     }
 }
 
-/// The environment variable when it holds something, else the keychain.
-fn password_from(
-    env: Option<String>,
-    keychain: impl FnOnce() -> Result<Option<Secret>, AppError>,
-) -> Result<Option<Secret>, AppError> {
-    match env.filter(|v| !v.is_empty()) {
-        Some(value) => Ok(Some(Secret::new(value))),
-        None => keychain(),
+fn username_from(
+    flag: Option<&str>,
+    config: impl FnOnce() -> Result<Config, AppError>,
+) -> Result<String, AppError> {
+    match flag {
+        Some(username) => Ok(username.to_string()),
+        None => config()?
+            .username
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| AppError::Auth("no FPL username is configured".into())),
     }
 }
 
-fn read_keychain(username: &str) -> Result<Option<Secret>, AppError> {
-    if let Some(secret) = CredentialStore::new(SERVICE).get(username)? {
-        return Ok(Some(secret));
+/// The keychain as this server reads it: the current service, then a password
+/// an older version stored, which stays where it is.
+struct Keychain;
+
+impl KeychainRead for Keychain {
+    fn service(&self) -> &str {
+        SERVICE
     }
-    CredentialStore::new(LEGACY_SERVICE).get(username)
+
+    fn get(&self, account: &str) -> Result<Option<Secret>, AppError> {
+        if let Some(secret) = CredentialStore::new(SERVICE).get(account)? {
+            return Ok(Some(secret));
+        }
+        CredentialStore::new(LEGACY_SERVICE).get(account)
+    }
+}
+
+/// The family's secret precedence: the variable, then the keychain.
+fn resolve_password(
+    keychain: &impl KeychainRead,
+    env: &str,
+    username: &str,
+) -> Result<Secret, AppError> {
+    let spec = SecretSpec::new(username)
+        .env(env)
+        .remedy("`fpl auth login`");
+    SecretResolver::new(keychain)
+        .resolve(&spec)?
+        .map(|resolved| resolved.secret)
+        .ok_or_else(|| AppError::Auth(format!("no stored password for {username:?}")))
 }
 
 /// [`UtilitySource`] over a [`Portal`].
 pub struct FplSource<P> {
     portal: P,
-    /// `--account`, `$FPL_ACCOUNT`, or the config's active account.
-    default_account: Option<String>,
 }
 
 impl<P: Portal> FplSource<P> {
     /// The named account, else the default, else the login's first, the order
     /// the commands use.
     fn account(&self, named: Option<&str>) -> Result<String, AppError> {
-        if let Some(account) = named.or(self.default_account.as_deref()) {
+        if let Some(account) = named {
             return Ok(account.to_string());
+        }
+        if let Some(account) = self.portal.default_account()? {
+            return Ok(account);
         }
         self.portal
             .accounts()?
@@ -312,6 +342,10 @@ impl<P: Portal> UtilitySource for FplSource<P> {
             .get("data")
             .and_then(Value::as_array)
             .ok_or_else(|| shape_error("account history"))?;
+        // Rows that no longer say what they are would all read as "not a payment".
+        if !rows.is_empty() && !rows.iter().any(output::states_a_ledger_code) {
+            return Err(shape_error("account history"));
+        }
         let payment_rows: Vec<&Value> = rows.iter().filter(|r| output::is_payment_row(r)).collect();
         let mut payments: Vec<Payment> = payment_rows
             .iter()

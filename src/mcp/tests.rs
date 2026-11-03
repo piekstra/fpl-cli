@@ -19,6 +19,7 @@ struct Fixtures {
     detail: Value,
     bills: Value,
     ledger: Value,
+    default_account: Option<String>,
     /// Every read, with its account.
     calls: Rc<RefCell<Vec<String>>>,
 }
@@ -43,6 +44,7 @@ impl Fixtures {
             detail: fixture(include_str!("../../tests/fixtures/account_detail.json")),
             bills: fixture(include_str!("../../tests/fixtures/bill_history.json")),
             ledger: fixture(include_str!("../../tests/fixtures/account_history.json")),
+            default_account: None,
             calls: Rc::default(),
         }
     }
@@ -53,6 +55,10 @@ impl Fixtures {
 }
 
 impl Portal for Fixtures {
+    fn default_account(&self) -> Result<Option<String>, AppError> {
+        Ok(self.default_account.clone())
+    }
+
     fn accounts(&self) -> Result<Vec<AccountSummary>, AppError> {
         self.log("accounts");
         Ok(self
@@ -84,16 +90,11 @@ impl Portal for Fixtures {
 }
 
 fn tools_over(
-    portal: Fixtures,
+    mut portal: Fixtures,
     default_account: Option<&str>,
 ) -> UtilityTools<FplSource<Fixtures>> {
-    with_source(
-        FplSource {
-            portal,
-            default_account: default_account.map(str::to_string),
-        },
-        false,
-    )
+    portal.default_account = default_account.map(str::to_string);
+    with_source(FplSource { portal }, false)
 }
 
 fn ok(t: &UtilityTools<FplSource<Fixtures>>, tool: &str, args: Value) -> Value {
@@ -262,38 +263,69 @@ fn since_narrows_payments_though_the_source_cannot() {
 }
 
 #[test]
+fn a_ledger_that_no_longer_says_what_its_rows_are_is_an_error() {
+    let mut portal = Fixtures::new();
+    portal.ledger = json!({"data": [{"renamedCode": "PYMT", "transactionDate": "2026-06-20"}]});
+    let t = tools_over(portal, None);
+    let result = call(&t, "fpl_payments", json!({}));
+    assert!(result.text().starts_with("upstream:"), "{}", result.text());
+}
+
+#[test]
+fn a_ledger_of_charges_alone_is_no_payments() {
+    let mut portal = Fixtures::new();
+    portal.ledger = json!({"data": [{"debitCreditDescriptionCode": "BILL"}]});
+    let t = tools_over(portal, None);
+    assert_eq!(ok(&t, "fpl_payments", json!({}))["returned"], 0);
+}
+
+#[test]
 fn a_password_in_the_environment_points_at_where_it_is_set() {
-    fn expired(_: &str) -> Result<Value, AppError> {
-        Err(AppError::Auth("FPL rejected the password.".into()))
+    // Fpl::login's own wording, which names a command for a terminal.
+    fn refused(_: &str) -> Result<Value, AppError> {
+        Err(AppError::Auth(
+            "FPL rejected the password. Re-run `fpl init` with the credentials you use at fpl.com."
+                .into(),
+        ))
     }
     struct Refusing;
     impl Portal for Refusing {
+        fn default_account(&self) -> Result<Option<String>, AppError> {
+            Ok(Some("1".into()))
+        }
         fn accounts(&self) -> Result<Vec<AccountSummary>, AppError> {
             Ok(Vec::new())
         }
         fn account_detail(&self, a: &str) -> Result<Value, AppError> {
-            expired(a)
+            refused(a)
         }
         fn bill_history(&self, a: &str) -> Result<Value, AppError> {
-            expired(a)
+            refused(a)
         }
         fn account_history(&self, a: &str) -> Result<Value, AppError> {
-            expired(a)
+            refused(a)
         }
     }
-    let source = |account: &str| FplSource {
-        portal: Refusing,
-        default_account: Some(account.to_string()),
-    };
-    let text = call(&with_source(source("1"), true), "fpl_usage", json!({}))
-        .text()
-        .to_string();
+    let text = call(
+        &with_source(FplSource { portal: Refusing }, true),
+        "fpl_usage",
+        json!({}),
+    )
+    .text()
+    .to_string();
+    assert!(text.contains("FPL rejected the password"), "{text}");
     assert!(text.contains("Claude Desktop extension"), "{text}");
+    assert!(!text.contains("fpl init"), "{text}");
     assert!(!text.contains("fpl auth login"), "{text}");
 
-    let text = call(&with_source(source("1"), false), "fpl_usage", json!({}))
-        .text()
-        .to_string();
+    let text = call(
+        &with_source(FplSource { portal: Refusing }, false),
+        "fpl_usage",
+        json!({}),
+    )
+    .text()
+    .to_string();
+    assert!(!text.contains("fpl init"), "{text}");
     assert!(text.contains("`fpl auth login`"), "{text}");
 }
 
@@ -405,27 +437,78 @@ fn a_bad_argument_reaches_no_portal() {
     assert!(calls.borrow().is_empty());
 }
 
-#[test]
-fn the_environment_password_comes_before_the_keychain_and_empty_counts_as_unset() {
-    let never = || -> Result<Option<Secret>, AppError> { panic!("the keychain was read") };
-    let got = password_from(Some("from-env".into()), never)
-        .unwrap()
-        .unwrap();
-    assert_eq!(got.expose(), "from-env");
+/// A keychain that counts its reads and holds one password for any account.
+struct StubKeychain {
+    password: Option<&'static str>,
+    reads: std::cell::Cell<u32>,
+}
 
-    let got = password_from(Some(String::new()), || Ok(Some(Secret::new("stored"))))
-        .unwrap()
-        .unwrap();
-    assert_eq!(got.expose(), "stored");
-    assert!(password_from(None, || Ok(None)).unwrap().is_none());
+impl StubKeychain {
+    fn holding(password: Option<&'static str>) -> Self {
+        Self {
+            password,
+            reads: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl KeychainRead for StubKeychain {
+    fn service(&self) -> &str {
+        "stub"
+    }
+
+    fn get(&self, _account: &str) -> Result<Option<Secret>, AppError> {
+        self.reads.set(self.reads.get() + 1);
+        Ok(self.password.map(Secret::new))
+    }
+}
+
+// Each test names its own variable: the tests share one process's environment.
+
+#[test]
+fn the_environment_password_comes_before_the_keychain() {
+    const VAR: &str = "FPL_TEST_PASSWORD_SET";
+    std::env::set_var(VAR, "from-env");
+    let keychain = StubKeychain::holding(Some("stored"));
+    let password = resolve_password(&keychain, VAR, "user").unwrap();
+    assert_eq!(password.expose(), "from-env");
+    assert_eq!(keychain.reads.get(), 0);
 }
 
 #[test]
-fn a_session_with_no_username_is_an_auth_error_naming_no_other_command() {
-    let portal = LivePortal::new(Some(String::new()));
-    let err = Portal::accounts(&portal).unwrap_err();
+fn an_empty_environment_password_is_an_error_not_a_keychain_read() {
+    const VAR: &str = "FPL_TEST_PASSWORD_EMPTY";
+    std::env::set_var(VAR, "");
+    let keychain = StubKeychain::holding(Some("stored"));
+    let err = resolve_password(&keychain, VAR, "user").err().unwrap();
+    assert!(err.to_string().contains(VAR), "{err}");
+    assert_eq!(keychain.reads.get(), 0);
+}
+
+#[test]
+fn an_unset_environment_password_falls_to_the_keychain_and_nothing_stored_says_so() {
+    let var = "FPL_TEST_PASSWORD_UNSET";
+    let stored = resolve_password(&StubKeychain::holding(Some("stored")), var, "user").unwrap();
+    assert_eq!(stored.expose(), "stored");
+    let err = resolve_password(&StubKeychain::holding(None), var, "user")
+        .err()
+        .unwrap();
+    assert!(err.to_string().contains("no stored password"), "{err}");
+}
+
+#[test]
+fn the_flag_wins_over_the_config_and_no_username_is_an_auth_error() {
+    let never = || -> Result<Config, AppError> { panic!("the config was read") };
+    assert_eq!(username_from(Some("flag"), never).unwrap(), "flag");
+    let configured = || {
+        Ok(Config {
+            username: Some("configured".into()),
+            ..Config::default()
+        })
+    };
+    assert_eq!(username_from(None, configured).unwrap(), "configured");
+    let err = username_from(None, || Ok(Config::default())).unwrap_err();
     assert!(matches!(err, AppError::Auth(_)), "{err:?}");
-    assert!(!err.to_string().contains("fpl init"), "{err}");
 }
 
 /// Every identity-bearing value in the fixtures is a placeholder.

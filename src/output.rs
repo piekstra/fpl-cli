@@ -689,6 +689,12 @@ fn fmt_payments_list(v: &Value) -> Option<Vec<String>> {
 // verbatim.
 
 /// A ledger row that is a posted payment (`PYMT`).
+/// Whether a ledger row carries the code [`is_payment_row`] reads.
+pub(crate) fn states_a_ledger_code(r: &Value) -> bool {
+    r.get("debitCreditDescriptionCode")
+        .is_some_and(Value::is_string)
+}
+
 pub(crate) fn is_payment_row(r: &Value) -> bool {
     r.get("debitCreditDescriptionCode")
         .and_then(|c| c.as_str())
