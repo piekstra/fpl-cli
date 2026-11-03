@@ -15,6 +15,7 @@
 
 use std::time::Duration;
 
+use pk_cli_core::transport::{require_secure_url, same_host_redirects, secure_redirects};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -48,7 +49,9 @@ pub struct AccountSummary {
     pub balance: Option<String>,
 }
 
-fn build_client() -> Result<reqwest::blocking::Client, AppError> {
+fn build_client(
+    redirects: reqwest::redirect::Policy,
+) -> Result<reqwest::blocking::Client, AppError> {
     reqwest::blocking::Client::builder()
         .user_agent(UA)
         // Total request budget, plus an explicit connect budget so a stalled
@@ -57,6 +60,7 @@ fn build_client() -> Result<reqwest::blocking::Client, AppError> {
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(15))
         .cookie_store(true)
+        .redirect(redirects)
         .build()
         .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))
 }
@@ -92,23 +96,27 @@ fn login_failure(status: u16) -> AppError {
 }
 
 /// Turn a service path into a full URL. Accepts either an absolute URL or a
-/// leading-slash path relative to [`API_HOST`].
-fn url_for(path: &str) -> String {
+/// leading-slash path relative to [`API_HOST`]. An absolute URL is what `fpl api`
+/// passes through, and the session JWT goes with every request, so it must be
+/// `https`, or `http` only to this machine.
+fn url_for(path: &str) -> Result<String, AppError> {
     if path.starts_with("http://") || path.starts_with("https://") {
-        path.to_string()
+        require_secure_url(path)?;
+        Ok(path.to_string())
     } else if let Some(rest) = path.strip_prefix('/') {
-        format!("{API_HOST}/{rest}")
+        Ok(format!("{API_HOST}/{rest}"))
     } else {
-        format!("{API_HOST}/{path}")
+        Ok(format!("{API_HOST}/{path}"))
     }
 }
 
 impl Fpl {
     /// Authenticate with FPL and capture the session JWT + cookies.
     pub fn login(username: &str, password: &Secret) -> Result<Fpl, AppError> {
-        let client = build_client()?;
+        // The session JWT is FPL's own header, which reqwest keeps on every hop.
+        let client = build_client(same_host_redirects())?;
         let resp = client
-            .get(url_for(LOGIN_PATH))
+            .get(url_for(LOGIN_PATH)?)
             .basic_auth(username, Some(password.expose()))
             .header("Accept", "application/json")
             .send()?;
@@ -189,13 +197,13 @@ impl Fpl {
     }
 
     pub fn get(&self, path: &str) -> Result<Value, AppError> {
-        let resp = self.auth_headers(self.client.get(url_for(path))).send()?;
+        let resp = self.auth_headers(self.client.get(url_for(path)?)).send()?;
         self.handle(resp, path)
     }
 
     pub fn post(&self, path: &str, body: &Value) -> Result<Value, AppError> {
         let resp = self
-            .auth_headers(self.client.post(url_for(path)))
+            .auth_headers(self.client.post(url_for(path)?))
             .header("Content-Type", "application/json")
             .json(body)
             .send()?;
@@ -204,7 +212,7 @@ impl Fpl {
 
     pub fn put(&self, path: &str, body: &Value) -> Result<Value, AppError> {
         let resp = self
-            .auth_headers(self.client.put(url_for(path)))
+            .auth_headers(self.client.put(url_for(path)?))
             .header("Content-Type", "application/json")
             .json(body)
             .send()?;
@@ -225,7 +233,7 @@ impl Fpl {
             "PUT" => self.put(path, body.unwrap_or(&Value::Null)),
             "DELETE" => {
                 let resp = self
-                    .auth_headers(self.client.delete(url_for(path)))
+                    .auth_headers(self.client.delete(url_for(path)?))
                     .send()?;
                 self.handle(resp, path)
             }
@@ -578,7 +586,7 @@ impl Fpl {
     pub fn logout(&self) -> Result<(), AppError> {
         // Best-effort; ignore the body.
         let _ = self
-            .auth_headers(self.client.get(url_for(LOGOUT_PATH)))
+            .auth_headers(self.client.get(url_for(LOGOUT_PATH)?))
             .send();
         Ok(())
     }
@@ -586,7 +594,7 @@ impl Fpl {
 
 /// Fetch the public county outage feed (no auth required).
 pub fn county_outages() -> Result<Value, AppError> {
-    let client = build_client()?;
+    let client = build_client(secure_redirects())?;
     let resp = client.get(OUTAGE_COUNTY_URL).send()?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!(
@@ -614,9 +622,35 @@ mod tests {
 
     #[test]
     fn url_for_handles_paths_and_absolutes() {
-        assert_eq!(url_for("/cs/x"), "https://www.fpl.com/cs/x");
-        assert_eq!(url_for("cs/x"), "https://www.fpl.com/cs/x");
-        assert_eq!(url_for("https://other/y"), "https://other/y");
+        assert_eq!(url_for("/cs/x").unwrap(), "https://www.fpl.com/cs/x");
+        assert_eq!(url_for("cs/x").unwrap(), "https://www.fpl.com/cs/x");
+        assert_eq!(url_for("https://other/y").unwrap(), "https://other/y");
+        assert_eq!(
+            url_for("http://127.0.0.1:8080/y").unwrap(),
+            "http://127.0.0.1:8080/y"
+        );
+    }
+
+    /// The JWT goes with every request, so `fpl api GET http://…` must not send.
+    /// This host resolves nowhere, so only a refusal before the send gets exit 2.
+    #[test]
+    fn a_plain_http_url_is_refused_before_anything_is_sent() {
+        let session = Fpl {
+            client: build_client(same_host_redirects()).unwrap(),
+            jwt: "dummy-jwt".into(),
+        };
+        let url = "http://www.example.invalid/x?account=1234567890";
+        for result in [
+            session.get(url),
+            session.post(url, &Value::Null),
+            session.put(url, &Value::Null),
+            session.request("DELETE", url, None),
+        ] {
+            let err = result.unwrap_err();
+            assert_eq!(err.exit_code(), 2, "{err}");
+            assert!(err.to_string().contains("only https"), "{err}");
+            assert!(!err.to_string().contains("1234567890"), "{err}");
+        }
     }
 
     #[test]

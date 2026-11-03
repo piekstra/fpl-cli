@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.5.1 — 2026-11-03
+
+- `fpl api` refuses a plain `http://` URL, except to this machine (exit 2). It sent the
+  session JWT and cookies in the clear. An `https` URL to any host still works, since you
+  named it.
+- A redirect that leaves `https`, or goes to another host while the session JWT is in
+  use, is now an error rather than followed, since reqwest keeps FPL's `jwttoken` header
+  on every hop. `fpl outages` reads a public feed with no JWT, so only the `https` rule
+  applies there.
+- A network failure's message names the host, not the whole URL.
+- cli-common v0.24.0, up from v0.21.0.
+
 ## v0.5.0 — 2026-11-03
 
 - `fpl mcp`: read-only tools for Claude, the `utility/v1` set from cli-common's
