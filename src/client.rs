@@ -84,6 +84,13 @@ fn body_hint(text: &str) -> String {
     format!(" — {}", trimmed.chars().take(120).collect::<String>())
 }
 
+/// A failed login with any status but 401. FPL documents 401 as its refusal of
+/// the credentials; anything else (a 5xx, a 429, a 403 from its edge) says
+/// nothing about them.
+fn login_failure(status: u16) -> AppError {
+    AppError::Upstream(format!("FPL login failed (HTTP {status})."))
+}
+
 /// Turn a service path into a full URL. Accepts either an absolute URL or a
 /// leading-slash path relative to [`API_HOST`].
 fn url_for(path: &str) -> String {
@@ -135,12 +142,7 @@ impl Fpl {
             )));
         }
 
-        // A 5xx or 429 says nothing about the credentials.
-        let message = format!("FPL login failed (HTTP {}).", status.as_u16());
-        if status.is_server_error() || status.as_u16() == 429 {
-            return Err(AppError::Upstream(message));
-        }
-        Err(AppError::Auth(message))
+        Err(login_failure(status.as_u16()))
     }
 
     fn auth_headers(
@@ -599,6 +601,16 @@ pub fn county_outages() -> Result<Value, AppError> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_login_failure_other_than_401_is_upstream_not_auth() {
+        for status in [403, 404, 429, 500, 503] {
+            assert!(
+                matches!(login_failure(status), AppError::Upstream(_)),
+                "{status}"
+            );
+        }
+    }
 
     #[test]
     fn url_for_handles_paths_and_absolutes() {

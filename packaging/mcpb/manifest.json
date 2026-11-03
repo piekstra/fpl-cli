@@ -4,7 +4,7 @@
   "display_name": "FPL (fpl)",
   "version": "0.5.0",
   "description": "Read-only access to your own Florida Power & Light balance, bills, payments and electricity use, through the open-source fpl CLI.",
-  "long_description": "Ask Claude about your FPL account: what you owe and when it is due, what past bills came to, which payments posted, and how much electricity each bill covered. Four read-only tools, fpl_balance, fpl_bills, fpl_payments and fpl_usage; nothing can make a payment or change your account. Your FPL username and password stay on your computer: Claude Desktop keeps them in its own secure store and passes them to the bundled fpl binary, which signs in to fpl.com directly. Unofficial; not affiliated with Florida Power & Light.",
+  "long_description": "Ask Claude about your FPL account: what you owe and when it is due, what past bills came to, which payments posted, and how much electricity each bill covered. Four read-only tools, fpl_balance, fpl_bills, fpl_payments and fpl_usage; nothing can make a payment or change your account. Your FPL username and password stay on your computer: Claude Desktop keeps them in its own secure store and passes them to the bundled fpl binary, which signs in to fpl.com directly. What the tools return (balance, bills, payments, usage, service address) goes to Claude as part of your conversation. Unofficial; not affiliated with Florida Power & Light.",
   "author": {
     "name": "piekstra",
     "url": "https://github.com/piekstra"

@@ -9,6 +9,11 @@
 //! the session while it runs. It reads the credential and never writes one: a
 //! password still under the legacy keychain service stays there rather than
 //! being migrated, because an MCP server must not change the keychain.
+//!
+//! The commands' mappers are best-effort, for a person who can see the raw
+//! payload. A tool's answer goes to a model as fact, so here an answer FPL did
+//! not give (a balance no field states, rows none of which can be read) is an
+//! upstream error, never 0.00 or an empty list.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -39,15 +44,29 @@ pub fn tools(cli: &Cli, cfg: &Config) -> UtilityTools<FplSource<LivePortal>> {
             .or_else(|| cfg.account.clone())
             .filter(|a| !a.is_empty()),
     };
-    with_source(source)
+    let password_in_env = std::env::var(PASSWORD_ENV).is_ok_and(|v| !v.is_empty());
+    with_source(source, password_in_env)
 }
 
-fn with_source<P: Portal>(source: FplSource<P>) -> UtilityTools<FplSource<P>> {
-    let server = Server::new("fpl", env!("CARGO_PKG_VERSION"), "FPL", "fpl").instructions(
+fn with_source<P: Portal>(
+    source: FplSource<P>,
+    password_in_env: bool,
+) -> UtilityTools<FplSource<P>> {
+    let mut server = Server::new("fpl", env!("CARGO_PKG_VERSION"), "FPL", "fpl").instructions(
         "FPL access here is read-only: no tool can make a payment or change anything. Payments \
          come from FPL's 25 most recent ledger entries, so an older payment is not listed. Usage \
          is the kWh on each bill. A bill's paid state is not reported.",
     );
+    // The keychain is not read while the variable is set, and a Claude Desktop
+    // extension bundles its binary, so `fpl auth login` would fix nothing.
+    if password_in_env {
+        server = server.hosted(
+            "through the open-source `fpl` tool; the password stays on the user's machine, in \
+             the settings of the program that started this server",
+            "ask the user to update the FPL password where it is set: for the Claude Desktop \
+             extension, in its settings; otherwise $FPL_PASSWORD",
+        );
+    }
     UtilityTools::new(server, source).metering("electricity use")
 }
 
@@ -62,16 +81,75 @@ pub trait Portal {
 /// `Portal` over fpl.com.
 pub struct LivePortal {
     username: Option<String>,
-    state: Mutex<Session>,
+    state: Mutex<SignIn<Fpl>>,
 }
 
-#[derive(Default)]
-struct Session {
-    fpl: Option<Fpl>,
-    /// The password FPL last refused. Not sent again, so a server left running
-    /// after a password change cannot lock the account by retrying it: the
-    /// next call that finds a different one tries that.
+/// A kept session, and the password FPL last refused.
+struct SignIn<S> {
+    session: Option<S>,
+    /// Not sent again, so a server left running after a password change cannot
+    /// lock the account by retrying it: the next call that finds a different
+    /// password tries that. Only a refusal lands here; FPL being down does not.
     refused: Option<Secret>,
+}
+
+impl<S> Default for SignIn<S> {
+    fn default() -> Self {
+        Self {
+            session: None,
+            refused: None,
+        }
+    }
+}
+
+impl<S> SignIn<S> {
+    /// One read on the kept session, signing in when there is none and once
+    /// more when FPL says the session has lapsed.
+    fn read<T>(
+        &mut self,
+        password: impl Fn() -> Result<Secret, AppError>,
+        login: impl Fn(&Secret) -> Result<S, AppError>,
+        op: impl Fn(&S) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        if self.session.is_none() {
+            self.sign_in(&password, &login)?;
+        }
+        match op(self.session.as_ref().expect("signed in above")) {
+            Err(AppError::Auth(_)) => {
+                self.session = None;
+                self.sign_in(&password, &login)?;
+                op(self.session.as_ref().expect("signed in above"))
+            }
+            other => other,
+        }
+    }
+
+    fn sign_in(
+        &mut self,
+        password: &impl Fn() -> Result<Secret, AppError>,
+        login: &impl Fn(&Secret) -> Result<S, AppError>,
+    ) -> Result<(), AppError> {
+        let password = password()?;
+        let refused = self.refused.as_ref();
+        if refused.is_some_and(|r| r.expose() == password.expose()) {
+            return Err(AppError::Auth(
+                "FPL refused this password on an earlier call, so it was not sent again".into(),
+            ));
+        }
+        match login(&password) {
+            Ok(session) => {
+                self.session = Some(session);
+                self.refused = None;
+                Ok(())
+            }
+            Err(e) => {
+                if matches!(e, AppError::Auth(_)) {
+                    self.refused = Some(password);
+                }
+                Err(e)
+            }
+        }
+    }
 }
 
 impl LivePortal {
@@ -82,52 +160,24 @@ impl LivePortal {
         }
     }
 
-    fn sign_in(&self, session: &mut Session) -> Result<(), AppError> {
+    fn read<T>(&self, op: impl Fn(&Fpl) -> Result<T, AppError>) -> Result<T, AppError> {
         let username = self
             .username
             .as_deref()
             .ok_or_else(|| AppError::Auth("no FPL username is configured".into()))?;
-        let password = password_from(std::env::var(PASSWORD_ENV).ok(), || read_keychain(username))?
-            .ok_or_else(|| AppError::Auth(format!("no stored password for {username:?}")))?;
-        let refused = session.refused.as_ref();
-        if refused.is_some_and(|r| r.expose() == password.expose()) {
-            return Err(AppError::Auth(
-                "FPL refused this password on an earlier call, so it was not sent again".into(),
-            ));
-        }
-        match Fpl::login(username, &password) {
-            Ok(fpl) => {
-                *session = Session {
-                    fpl: Some(fpl),
-                    refused: None,
-                };
-                Ok(())
-            }
-            Err(e) => {
-                if matches!(e, AppError::Auth(_)) {
-                    session.refused = Some(password);
-                }
-                Err(e)
-            }
-        }
-    }
-
-    /// One read on the kept session, signing in when there is none and once
-    /// more when FPL says the session has lapsed.
-    fn read<T>(&self, op: impl Fn(&Fpl) -> Result<T, AppError>) -> Result<T, AppError> {
-        let mut session = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if session.fpl.is_none() {
-            self.sign_in(&mut session)?;
-        }
-        let fpl = session.fpl.as_ref().expect("signed in above");
-        match op(fpl) {
-            Err(AppError::Auth(_)) => {
-                session.fpl = None;
-                self.sign_in(&mut session)?;
-                op(session.fpl.as_ref().expect("signed in above"))
-            }
-            other => other,
-        }
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .read(
+                || {
+                    password_from(std::env::var(PASSWORD_ENV).ok(), || read_keychain(username))?
+                        .ok_or_else(|| {
+                            AppError::Auth(format!("no stored password for {username:?}"))
+                        })
+                },
+                |password| Fpl::login(username, password),
+                op,
+            )
     }
 }
 
@@ -207,6 +257,15 @@ fn shape_error(what: &str) -> AppError {
     AppError::Upstream(format!("FPL's {what} did not have the expected shape"))
 }
 
+/// Rows FPL sent, none of which could be read, mean its answer changed. Passing
+/// that on as an empty list would read as "no bills".
+fn none_read_is_an_error<R, T>(rows: &[R], read: &[T], what: &str) -> Result<(), AppError> {
+    if !rows.is_empty() && read.is_empty() {
+        return Err(shape_error(what));
+    }
+    Ok(())
+}
+
 impl<P: Portal> UtilitySource for FplSource<P> {
     async fn accounts(&self) -> Result<Vec<UtilityAccount>, AppError> {
         Ok(self
@@ -223,18 +282,23 @@ impl<P: Portal> UtilitySource for FplSource<P> {
     async fn summary(&self, account: Option<&str>) -> Result<UtilitySummary, AppError> {
         let account = self.account(account)?;
         let detail = self.portal.account_detail(&account)?;
+        if output::balance_of(&detail).is_none() {
+            return Err(shape_error("account detail"));
+        }
         Ok(output::utility_summary_dto(&detail, &account))
     }
 
     async fn statements(&self, account: Option<&str>) -> Result<Vec<Statement>, AppError> {
         let account = self.account(account)?;
-        let mut rows: Vec<Statement> = self
-            .bill_rows(&account)?
+        let rows = self.bill_rows(&account)?;
+        let mut statements: Vec<Statement> = rows
             .iter()
+            .filter(|r| output::states_an_amount(r))
             .filter_map(output::statement_of)
             .collect();
-        rows.sort_by(|a, b| b.date.cmp(&a.date));
-        Ok(rows)
+        none_read_is_an_error(&rows, &statements, "bill history")?;
+        statements.sort_by(|a, b| b.date.cmp(&a.date));
+        Ok(statements)
     }
 
     async fn payments(
@@ -248,24 +312,23 @@ impl<P: Portal> UtilitySource for FplSource<P> {
             .get("data")
             .and_then(Value::as_array)
             .ok_or_else(|| shape_error("account history"))?;
-        let mut rows: Vec<Payment> = rows
+        let payment_rows: Vec<&Value> = rows.iter().filter(|r| output::is_payment_row(r)).collect();
+        let mut payments: Vec<Payment> = payment_rows
             .iter()
-            .filter(|r| output::is_payment_row(r))
-            .filter_map(output::payment_of)
+            .filter_map(|r| output::payment_of(r))
             .collect();
-        rows.sort_by(|a, b| b.date.cmp(&a.date));
-        Ok(rows)
+        none_read_is_an_error(&payment_rows, &payments, "account history")?;
+        payments.sort_by(|a, b| b.date.cmp(&a.date));
+        Ok(payments)
     }
 
     async fn usage(&self, account: Option<&str>) -> Result<Vec<UsagePeriod>, AppError> {
         let account = self.account(account)?;
-        let mut rows: Vec<UsagePeriod> = self
-            .bill_rows(&account)?
-            .iter()
-            .filter_map(output::usage_of)
-            .collect();
-        rows.sort_by(|a, b| b.period.cmp(&a.period));
-        Ok(rows)
+        let rows = self.bill_rows(&account)?;
+        let mut usage: Vec<UsagePeriod> = rows.iter().filter_map(output::usage_of).collect();
+        none_read_is_an_error(&rows, &usage, "bill history")?;
+        usage.sort_by(|a, b| b.period.cmp(&a.period));
+        Ok(usage)
     }
 }
 

@@ -87,10 +87,13 @@ fn tools_over(
     portal: Fixtures,
     default_account: Option<&str>,
 ) -> UtilityTools<FplSource<Fixtures>> {
-    with_source(FplSource {
-        portal,
-        default_account: default_account.map(str::to_string),
-    })
+    with_source(
+        FplSource {
+            portal,
+            default_account: default_account.map(str::to_string),
+        },
+        false,
+    )
 }
 
 fn ok(t: &UtilityTools<FplSource<Fixtures>>, tool: &str, args: Value) -> Value {
@@ -202,6 +205,187 @@ fn a_body_with_no_list_is_an_upstream_error_not_an_empty_list() {
         let result = call(&t, tool, json!({}));
         assert!(result.is_error(), "{tool}");
         assert!(result.text().starts_with("upstream:"), "{}", result.text());
+    }
+}
+
+#[test]
+fn a_balance_fpl_did_not_state_is_an_error_not_zero() {
+    for detail in [
+        Value::Null,
+        json!({"data": {"accountNumber": "1234567890"}}),
+    ] {
+        let mut portal = Fixtures::new();
+        portal.detail = detail;
+        let t = tools_over(portal, None);
+        let result = call(&t, "fpl_balance", json!({}));
+        assert!(result.text().starts_with("upstream:"), "{}", result.text());
+    }
+}
+
+#[test]
+fn rows_none_of_which_can_be_read_are_an_error_not_an_empty_list() {
+    let mut portal = Fixtures::new();
+    portal.bills = json!({"data": {"data": [{"renamedDate": "2026-06-15"}]}});
+    portal.ledger = json!({"data": [{"debitCreditDescriptionCode": "PYMT"}]});
+    let t = tools_over(portal, None);
+    for tool in ["fpl_bills", "fpl_usage", "fpl_payments"] {
+        let result = call(&t, tool, json!({}));
+        assert!(result.text().starts_with("upstream:"), "{}", result.text());
+    }
+}
+
+#[test]
+fn a_bill_with_no_readable_amount_is_left_out_rather_than_shown_as_zero() {
+    let mut portal = Fixtures::new();
+    portal.bills["data"]["data"][0]["totalBillAmount"] = Value::Null;
+    let t = tools_over(portal, None);
+    let page = ok(&t, "fpl_bills", json!({}));
+    assert_eq!(page["returned"], 2);
+}
+
+#[test]
+fn an_empty_answer_is_an_empty_list() {
+    let mut portal = Fixtures::new();
+    portal.bills = json!({"data": {"data": []}});
+    portal.ledger = json!({"data": []});
+    let t = tools_over(portal, None);
+    assert_eq!(ok(&t, "fpl_bills", json!({}))["returned"], 0);
+    assert_eq!(ok(&t, "fpl_payments", json!({}))["returned"], 0);
+}
+
+#[test]
+fn since_narrows_payments_though_the_source_cannot() {
+    let t = tools_over(Fixtures::new(), None);
+    let page = ok(&t, "fpl_payments", json!({"since": "2026-06-01"}));
+    assert_eq!(page["returned"], 1);
+    assert_eq!(page["items"][0]["date"], "2026-06-20");
+}
+
+#[test]
+fn a_password_in_the_environment_points_at_where_it_is_set() {
+    fn expired(_: &str) -> Result<Value, AppError> {
+        Err(AppError::Auth("FPL rejected the password.".into()))
+    }
+    struct Refusing;
+    impl Portal for Refusing {
+        fn accounts(&self) -> Result<Vec<AccountSummary>, AppError> {
+            Ok(Vec::new())
+        }
+        fn account_detail(&self, a: &str) -> Result<Value, AppError> {
+            expired(a)
+        }
+        fn bill_history(&self, a: &str) -> Result<Value, AppError> {
+            expired(a)
+        }
+        fn account_history(&self, a: &str) -> Result<Value, AppError> {
+            expired(a)
+        }
+    }
+    let source = |account: &str| FplSource {
+        portal: Refusing,
+        default_account: Some(account.to_string()),
+    };
+    let text = call(&with_source(source("1"), true), "fpl_usage", json!({}))
+        .text()
+        .to_string();
+    assert!(text.contains("Claude Desktop extension"), "{text}");
+    assert!(!text.contains("fpl auth login"), "{text}");
+
+    let text = call(&with_source(source("1"), false), "fpl_usage", json!({}))
+        .text()
+        .to_string();
+    assert!(text.contains("`fpl auth login`"), "{text}");
+}
+
+mod sign_in {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// A login that counts its calls and answers as told.
+    fn login_with<'a>(
+        calls: &'a Cell<u32>,
+        answer: impl Fn(&str) -> Result<&'static str, AppError> + 'a,
+    ) -> impl Fn(&Secret) -> Result<&'static str, AppError> + 'a {
+        move |password| {
+            calls.set(calls.get() + 1);
+            answer(password.expose())
+        }
+    }
+
+    fn refuse(_: &str) -> Result<&'static str, AppError> {
+        Err(AppError::Auth("FPL rejected the password.".into()))
+    }
+
+    fn stored(value: &'static str) -> impl Fn() -> Result<Secret, AppError> {
+        move || Ok(Secret::new(value))
+    }
+
+    fn read_ok(_: &&'static str) -> Result<u32, AppError> {
+        Ok(7)
+    }
+
+    #[test]
+    fn a_refused_password_is_not_sent_again_and_a_different_one_is() {
+        let calls = Cell::new(0);
+        let mut state = SignIn::default();
+        let login = login_with(&calls, refuse);
+        assert!(state.read(stored("old"), &login, read_ok).is_err());
+        let again = state.read(stored("old"), &login, read_ok).unwrap_err();
+        assert_eq!(calls.get(), 1, "the refused password went out again");
+        assert!(again.to_string().contains("not sent again"), "{again}");
+
+        let login = login_with(&calls, |_| Ok("session"));
+        assert_eq!(state.read(stored("new"), &login, read_ok).unwrap(), 7);
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn fpl_being_down_is_not_a_refusal() {
+        let calls = Cell::new(0);
+        let mut state = SignIn::default();
+        let down = login_with(&calls, |_| Err(AppError::Upstream("HTTP 503".into())));
+        assert!(state.read(stored("same"), &down, read_ok).is_err());
+        assert!(state.read(stored("same"), &down, read_ok).is_err());
+        assert_eq!(calls.get(), 2, "an outage must not stop the next try");
+    }
+
+    #[test]
+    fn a_session_is_kept_and_signs_in_once_more_when_it_lapses() {
+        let calls = Cell::new(0);
+        let mut state = SignIn::default();
+        let login = login_with(&calls, |_| Ok("session"));
+        state.read(stored("p"), &login, read_ok).unwrap();
+        state.read(stored("p"), &login, read_ok).unwrap();
+        assert_eq!(calls.get(), 1, "the session should have been kept");
+
+        let reads = Cell::new(0);
+        let lapsed_once = |_: &&'static str| {
+            reads.set(reads.get() + 1);
+            if reads.get() == 1 {
+                Err(AppError::Auth("session expired".into()))
+            } else {
+                Ok(7)
+            }
+        };
+        assert_eq!(state.read(stored("p"), &login, lapsed_once).unwrap(), 7);
+        assert_eq!(calls.get(), 2);
+        assert_eq!(reads.get(), 2);
+    }
+
+    #[test]
+    fn a_session_refused_twice_does_not_loop() {
+        let calls = Cell::new(0);
+        let mut state = SignIn::default();
+        let login = login_with(&calls, |_| Ok("session"));
+        let reads = Cell::new(0);
+        let always_lapsed = |_: &&'static str| -> Result<u32, AppError> {
+            reads.set(reads.get() + 1);
+            Err(AppError::Auth("session expired".into()))
+        };
+        assert!(state.read(stored("p"), &login, always_lapsed).is_err());
+        assert_eq!(calls.get(), 2);
+        assert_eq!(reads.get(), 2);
     }
 }
 

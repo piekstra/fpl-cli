@@ -40,14 +40,19 @@ core security concern:
 ## The MCP server
 
 `fpl mcp` serves read-only tools to an MCP client (Claude Code, Claude Desktop) over
-stdio, on this machine only; it opens no port unless run with `--http` (below). It
-signs in to fpl.com with the stored password, as every command does, and keeps the
-session in memory while it runs. A tool never prompts and never creates or changes
-a keychain item: a password under the legacy `fpl-cli` service is read where it is,
-and a missing or rejected password is an error asking the user to run `fpl auth
-login` in a terminal. A password FPL has refused is not sent again by a running
-server, so a stale one cannot lock the account; the next call that finds a different
-password tries that.
+stdio; the server opens no port unless run with `--http` (below). **What the tools
+return goes to Claude on every path**, as part of your conversation: your balance,
+due date, bills, payments, electricity use and service address.
+
+It signs in to fpl.com with the stored password, as every command does, and keeps the
+session in memory while it runs. A tool never prompts and never creates or changes a
+keychain item: a password under the legacy `fpl-cli` service is read where it is, and
+a missing or rejected password is an error asking the user to run `fpl auth login` in
+a terminal. While `$FPL_PASSWORD` is set, the keychain is not read, so the error asks
+the user to update the password where it is set instead. A password FPL has refused
+is not sent again by a running server, so a stale one cannot lock the account; the
+next call that finds a different password tries that. Starting the server again sends
+it once more.
 
 The Claude Desktop extension (`.mcpb`) holds the username and password in Claude
 Desktop's secure store (`user_config`, the password `sensitive`) and passes them to
@@ -67,11 +72,8 @@ headers. Only the read-only tools are served (all four are). The password stays 
 your computer: the Worker sends tool calls and receives results, and never sees the
 password or an FPL session.
 
-**Tool results leave your computer on this path.** They hold your financial and
-household data (balance, due date, bills, payments, electricity use, and your
-service address where the account is named by it). They cross Cloudflare, through
-your tunnel and your Worker, and reach Claude, which shows them in your
-conversation. Who holds what, and what a leaked token can do, is in the connector's
+**Tool results also cross Cloudflare on this path**, through your tunnel and your
+Worker, on their way to Claude. Who holds what, and what a leaked token can do, is in the connector's
 [threat model](https://github.com/piekstra/cli-common/blob/main/connector/README.md#threat-model).
 
 `fpl auth logout` removes the password and does not touch `mcp-http-token` or stop

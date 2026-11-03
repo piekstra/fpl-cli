@@ -13,6 +13,6 @@
   password from its settings. Every other command still reads only the keychain.
 - `self-update` says to restart a running `fpl mcp --http` and to install the new
   `.mcpb`.
-- Sign-in: a 5xx or 429 from FPL's login is now exit 5 rather than exit 3, since it
-  says nothing about the credentials.
+- Sign-in: only a 401 from FPL's login is now exit 3. Any other failing status (a 5xx,
+  a 429, a 403 from FPL's edge) is exit 5, since it says nothing about the credentials.
 - cli-common v0.21.0, up from v0.5.0. Rust 1.89 or later.

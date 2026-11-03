@@ -798,6 +798,16 @@ pub fn apply_range(
     out
 }
 
+/// The balance an account-detail payload or a `loginNew` row states, if any.
+pub(crate) fn balance_of(v: &Value) -> Option<Money> {
+    let d = v.get("data").unwrap_or(v);
+    let found = ["balance", "actualBalance", "amount"]
+        .iter()
+        .filter_map(|k| d.get(*k))
+        .find(|x| !x.is_null());
+    money_value(found)
+}
+
 /// `summary --json` / `accounts balance --json`: the utility-summary/v1 card.
 /// `v` is either an account-detail payload or a `loginNew` balance row;
 /// `account` is the resolved account number (used when the payload has none).
@@ -810,10 +820,7 @@ pub(crate) fn utility_summary_dto(v: &Value, account: &str) -> UtilitySummary {
     let first = |keys: &[&str]| -> Option<&Value> {
         keys.iter().filter_map(|k| d.get(*k)).find(|x| !x.is_null())
     };
-    let mut dto = UtilitySummary::new(
-        money_value(first(&["balance", "actualBalance", "amount"]))
-            .unwrap_or_else(|| Money::usd("0.00")),
-    );
+    let mut dto = UtilitySummary::new(balance_of(v).unwrap_or_else(|| Money::usd("0.00")));
     dto.due_date = first(&["dueDateVal", "dueDate", "balance_due_date"])
         .map(scalar)
         .filter(|s| !s.is_empty())
@@ -834,6 +841,12 @@ pub(crate) fn utility_summary_dto(v: &Value, account: &str) -> UtilitySummary {
 pub fn statements(rows: &[Value]) {
     let items: Vec<Statement> = rows.iter().filter_map(statement_of).collect();
     json(&serde_json::to_value(Paged::new("statement", items)).unwrap_or_default());
+}
+
+/// Whether a bill-history row states its amount. [`statement_of`] shows a row
+/// without one as 0.00, which a tool must not hand a model as fact.
+pub(crate) fn states_an_amount(r: &Value) -> bool {
+    money_value(r.get("totalBillAmount")).is_some()
 }
 
 pub(crate) fn statement_of(r: &Value) -> Option<Statement> {
