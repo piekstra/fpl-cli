@@ -1,0 +1,8 @@
+{
+  "data": {
+    "accountNumber": "1234567890",
+    "serviceAddress": "100 Example Street",
+    "balance": 12.34,
+    "dueDateVal": "2026-08-01T00:00:00.000-04:00"
+  }
+}

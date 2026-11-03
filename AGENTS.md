@@ -25,6 +25,8 @@ before touching `src/client.rs`.
 | `src/config.rs` | `~/.config/fpl-cli/config.json` (non-secret prefs) |
 | `src/output.rs` | text rendering + control-plane JSON |
 | `src/error.rs` | `AppError` + exit codes |
+| `src/mcp.rs` | `fpl mcp`: `pk_cli_utility::mcp`'s shared tools over a `Portal` seam (`LivePortal` on fpl.com, fixtures in `src/mcp/tests.rs`) |
+| `packaging/mcpb/manifest.json` | the Claude Desktop extension; `tests/packaging.rs` holds it to the binary |
 | `src/commands/update.rs` | `fpl update`: self-update from GitHub Releases |
 | `src/commands/config.rs` | `fpl config path\|show\|set\|unset`: non-secret settings via `pk-cli-config` |
 | `src/dates.rs` | minimal date math (no calendar crate) |
@@ -36,11 +38,13 @@ before touching `src/client.rs`.
   `create`. Domain reads that name a precise FPL concept are allowed
   (`bills projected`, `accounts balance`). Don't coin a verb where a table verb
   fits; don't collapse `accounts list` to bare `accounts`.
-- **Secrets: keychain-only at runtime.** The password is read only from the OS
+- **Secrets: keychain at runtime.** Commands read the password only from the OS
   keychain. It gets there via `fpl init` / `fpl set-credential`, which ingest
   from `--stdin` or `--from-env <VAR>` — **never a `--value`/`--password` flag**
   (leaks to `ps`, history, transcripts). Credential replacement uses
-  `--overwrite`. Wrap secrets in `secrets::Secret`; never log or serialize one.
+  `--overwrite`. `fpl mcp` alone reads `$FPL_PASSWORD` first, so a Claude Desktop
+  extension can pass it, and never writes the keychain. Wrap secrets in
+  `secrets::Secret`; never log or serialize one.
 - **Mutation safety.** `payments create` moves money — confirm by default, skip
   with `--force` (NOT `--yes`). A non-TTY run without `--force` fails with a hint.
 - **Output: text is primary.** Resource reads render `Key: value` blocks and
@@ -77,8 +81,8 @@ unit tests on the pure helpers and verify manually with `fpl api`.
 ## The CLI family & cli-common
 
 This CLI conforms to **piekstra-cli/1** — the shared surface spec in
-[piekstra/cli-common](https://github.com/piekstra/cli-common) (`DESIGN.md`):
-standard `auth` / `config` / `self-update` / `completions` / `info` commands,
+[piekstra/cli-common](https://github.com/piekstra/cli-common) (`DESIGN.md`),
+pinned at **v0.21.0**: standard `auth` / `config` / `self-update` / `completions` / `info` commands,
 global `--json`, canonical DTOs (`auth-status/v1`, `self-update/v1`,
 `cli-info/v1`), and frozen exit codes 0–6. It also declares the **utility/v1
 domain profile** (SPEC v1.1 §1.8, crate `pk-cli-utility`) via `fpl info`:

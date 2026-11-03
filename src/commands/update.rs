@@ -14,5 +14,10 @@ pub fn run(ctx: &Ctx, args: &SelfUpdateArgs) -> Result<(), AppError> {
         target: env!("FPL_TARGET").into(),
         current: env!("CARGO_PKG_VERSION").into(),
     }
-    .run(args, ctx.cli.json, ctx.cli.quiet)
+    .run_noting(
+        args,
+        ctx.cli.json,
+        ctx.cli.quiet,
+        &pk_cli_mcp::restart_note("fpl"),
+    )
 }

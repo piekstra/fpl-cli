@@ -1,0 +1,105 @@
+{
+  "manifest_version": "0.3",
+  "name": "fpl",
+  "display_name": "FPL (fpl)",
+  "version": "0.5.0",
+  "description": "Read-only access to your own Florida Power & Light balance, bills, payments and electricity use, through the open-source fpl CLI.",
+  "long_description": "Ask Claude about your FPL account: what you owe and when it is due, what past bills came to, which payments posted, and how much electricity each bill covered. Four read-only tools, fpl_balance, fpl_bills, fpl_payments and fpl_usage; nothing can make a payment or change your account. Your FPL username and password stay on your computer: Claude Desktop keeps them in its own secure store and passes them to the bundled fpl binary, which signs in to fpl.com directly. Unofficial; not affiliated with Florida Power & Light.",
+  "author": {
+    "name": "piekstra",
+    "url": "https://github.com/piekstra"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/piekstra/fpl-cli"
+  },
+  "homepage": "https://github.com/piekstra/fpl-cli",
+  "documentation": "https://github.com/piekstra/fpl-cli#use-with-claude",
+  "support": "https://github.com/piekstra/fpl-cli/issues",
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "fpl",
+    "florida power and light",
+    "electric",
+    "utility",
+    "bills",
+    "read-only"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/fpl",
+    "mcp_config": {
+      "command": "${__dirname}/server/fpl",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "FPL_USERNAME": "${user_config.username}",
+        "FPL_PASSWORD": "${user_config.password}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/fpl.exe",
+          "args": [
+            "mcp"
+          ],
+          "env": {
+            "FPL_USERNAME": "${user_config.username}",
+            "FPL_PASSWORD": "${user_config.password}"
+          }
+        },
+        "linux": {
+          "command": "${__dirname}/server/linux/fpl",
+          "args": [
+            "mcp"
+          ],
+          "env": {
+            "FPL_USERNAME": "${user_config.username}",
+            "FPL_PASSWORD": "${user_config.password}"
+          }
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "fpl_balance",
+      "description": "What you owe FPL now and when it is due."
+    },
+    {
+      "name": "fpl_bills",
+      "description": "Past bills: date, amount and due date."
+    },
+    {
+      "name": "fpl_payments",
+      "description": "Payments posted to your account, from FPL's 25 most recent ledger entries."
+    },
+    {
+      "name": "fpl_usage",
+      "description": "The kWh on each bill."
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
+  },
+  "user_config": {
+    "username": {
+      "type": "string",
+      "title": "FPL username",
+      "description": "The email you sign in to fpl.com with.",
+      "required": true
+    },
+    "password": {
+      "type": "string",
+      "title": "FPL password",
+      "description": "The password you sign in to fpl.com with. Claude Desktop keeps it in its own secure store.",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}

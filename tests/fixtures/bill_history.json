@@ -1,0 +1,9 @@
+{
+  "data": {
+    "data": [
+      { "dateBilled": "2026-04-15", "totalBillAmount": 34.56, "dueDate": "2026-05-05", "consumptionUnit": 333, "daysBilled": 30 },
+      { "dateBilled": "2026-06-15", "totalBillAmount": 12.34, "dueDate": "2026-07-05", "consumptionUnit": 111, "daysBilled": 31 },
+      { "dateBilled": "2026-05-15", "totalBillAmount": 23.45, "dueDate": "2026-06-05", "consumptionUnit": "222", "daysBilled": 30 }
+    ]
+  }
+}

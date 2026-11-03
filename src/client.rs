@@ -135,10 +135,12 @@ impl Fpl {
             )));
         }
 
-        Err(AppError::Auth(format!(
-            "FPL login failed (HTTP {}).",
-            status.as_u16()
-        )))
+        // A 5xx or 429 says nothing about the credentials.
+        let message = format!("FPL login failed (HTTP {}).", status.as_u16());
+        if status.is_server_error() || status.as_u16() == 429 {
+            return Err(AppError::Upstream(message));
+        }
+        Err(AppError::Auth(message))
     }
 
     fn auth_headers(
