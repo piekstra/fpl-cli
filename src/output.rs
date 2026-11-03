@@ -18,7 +18,9 @@
 use pk_cli_core::dates::{self, Civil};
 use pk_cli_core::output::scalar;
 use pk_cli_core::Money;
-use pk_cli_utility::{Paged, Payment, RangeArgs, Statement, Transaction, UtilitySummary};
+use pk_cli_utility::{
+    Paged, Payment, RangeArgs, Statement, Transaction, UsagePeriod, UtilitySummary,
+};
 use serde_json::Value;
 
 use crate::client::AccountSummary;
@@ -687,6 +689,12 @@ fn fmt_payments_list(v: &Value) -> Option<Vec<String>> {
 // verbatim.
 
 /// A ledger row that is a posted payment (`PYMT`).
+/// Whether a ledger row carries the code [`is_payment_row`] reads.
+pub(crate) fn states_a_ledger_code(r: &Value) -> bool {
+    r.get("debitCreditDescriptionCode")
+        .is_some_and(Value::is_string)
+}
+
 pub(crate) fn is_payment_row(r: &Value) -> bool {
     r.get("debitCreditDescriptionCode")
         .and_then(|c| c.as_str())
@@ -786,7 +794,7 @@ pub fn apply_range(
             let Some(d) = r.get(date_key).and_then(Value::as_str).and_then(civil_of) else {
                 return false;
             };
-            since.map_or(true, |s| d >= s) && until.map_or(true, |u| d <= u)
+            since.is_none_or(|s| d >= s) && until.is_none_or(|u| d <= u)
         })
         .cloned()
         .collect();
@@ -796,6 +804,16 @@ pub fn apply_range(
     out
 }
 
+/// The balance an account-detail payload or a `loginNew` row states, if any.
+pub(crate) fn balance_of(v: &Value) -> Option<Money> {
+    let d = v.get("data").unwrap_or(v);
+    let found = ["balance", "actualBalance", "amount"]
+        .iter()
+        .filter_map(|k| d.get(*k))
+        .find(|x| !x.is_null());
+    money_value(found)
+}
+
 /// `summary --json` / `accounts balance --json`: the utility-summary/v1 card.
 /// `v` is either an account-detail payload or a `loginNew` balance row;
 /// `account` is the resolved account number (used when the payload has none).
@@ -803,15 +821,12 @@ pub fn utility_summary(v: &Value, account: &str) {
     json(&serde_json::to_value(utility_summary_dto(v, account)).unwrap_or_default());
 }
 
-fn utility_summary_dto(v: &Value, account: &str) -> UtilitySummary {
+pub(crate) fn utility_summary_dto(v: &Value, account: &str) -> UtilitySummary {
     let d = v.get("data").unwrap_or(v);
     let first = |keys: &[&str]| -> Option<&Value> {
         keys.iter().filter_map(|k| d.get(*k)).find(|x| !x.is_null())
     };
-    let mut dto = UtilitySummary::new(
-        money_value(first(&["balance", "actualBalance", "amount"]))
-            .unwrap_or_else(|| Money::usd("0.00")),
-    );
+    let mut dto = UtilitySummary::new(balance_of(v).unwrap_or_else(|| Money::usd("0.00")));
     dto.due_date = first(&["dueDateVal", "dueDate", "balance_due_date"])
         .map(scalar)
         .filter(|s| !s.is_empty())
@@ -834,7 +849,13 @@ pub fn statements(rows: &[Value]) {
     json(&serde_json::to_value(Paged::new("statement", items)).unwrap_or_default());
 }
 
-fn statement_of(r: &Value) -> Option<Statement> {
+/// Whether a bill-history row states its amount. [`statement_of`] shows a row
+/// without one as 0.00, which a tool must not hand a model as fact.
+pub(crate) fn states_an_amount(r: &Value) -> bool {
+    money_value(r.get("totalBillAmount")).is_some()
+}
+
+pub(crate) fn statement_of(r: &Value) -> Option<Statement> {
     let date = iso_date(r.get("dateBilled")?.as_str()?);
     Some(Statement {
         id: date.clone(),
@@ -852,7 +873,7 @@ pub fn payments(rows: &[Value]) {
     json(&serde_json::to_value(Paged::new("payment", items)).unwrap_or_default());
 }
 
-fn payment_of(r: &Value) -> Option<Payment> {
+pub(crate) fn payment_of(r: &Value) -> Option<Payment> {
     let date = iso_date(r.get("debitCreditTransactionDate")?.as_str()?);
     // Payments are credits (negative in the ledger); report the magnitude,
     // matching the text table.
@@ -863,6 +884,22 @@ fn payment_of(r: &Value) -> Option<Payment> {
         method: None,
         status: None,
         confirmation: None,
+    })
+}
+
+/// One bill-history row as a usage period: the kWh billed, labelled by the bill
+/// date, with the bill's total as its cost.
+pub(crate) fn usage_of(r: &Value) -> Option<UsagePeriod> {
+    let quantity = match r.get("consumptionUnit")? {
+        Value::Number(n) => n.as_f64()?,
+        Value::String(s) => s.replace(',', "").trim().parse().ok()?,
+        _ => return None,
+    };
+    Some(UsagePeriod {
+        period: iso_date(r.get("dateBilled")?.as_str()?),
+        quantity,
+        unit: "kWh".into(),
+        cost: money_value(r.get("totalBillAmount")),
     })
 }
 

@@ -1,8 +1,9 @@
 [package]
 name = "fpl-cli"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
-rust-version = "1.75"
+# pk-cli-auth (cli-common v0.21.0) needs 1.89.
+rust-version = "1.89"
 description = "Manage your Florida Power & Light account from the command line — Keychain-secured, agent-friendly. Work in progress."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/piekstra/fpl-cli"
@@ -18,18 +19,24 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
-pk-cli-core = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0", features = ["reqwest"] }
-pk-cli-secrets = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0" }
-pk-cli-config = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0" }
-pk-cli-selfupdate = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0" }
-pk-cli-auth = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0" }
-pk-cli-utility = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0" }
-pk-cli-documents = { git = "https://github.com/piekstra/cli-common", tag = "v0.5.0" }
+pk-cli-core = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0", features = ["reqwest"] }
+pk-cli-secrets = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0" }
+pk-cli-config = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0" }
+pk-cli-selfupdate = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0" }
+pk-cli-auth = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0" }
+pk-cli-utility = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0", features = ["mcp"] }
+pk-cli-documents = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0" }
+# `fpl mcp`: pk-cli-utility's shared utility/v1 tools, served over stdio or
+# 127.0.0.1 (DESIGN.md §1.9).
+pk-cli-mcp = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0", features = ["stdio", "http"] }
 clap_complete = "4"
 serde_json = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "cookies", "rustls-tls"] }
 
+[dev-dependencies]
+# The MCP profile's conformance checks, for the tests only.
+pk-cli-mcp = { git = "https://github.com/piekstra/cli-common", tag = "v0.21.0", features = ["test-util"] }
 
 [profile.release]
 strip = true

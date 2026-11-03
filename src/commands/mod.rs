@@ -33,7 +33,7 @@ use crate::secrets::CredentialStore;
 /// Family keychain service name (SPEC v1: `piekstra.<bin>`).
 pub const SERVICE: &str = "piekstra.fpl";
 /// Pre-cli-common service name; entries are migrated on first read.
-const LEGACY_SERVICE: &str = "fpl-cli";
+pub const LEGACY_SERVICE: &str = "fpl-cli";
 
 /// Read a stored password, transparently migrating a legacy-service entry to
 /// the family service name on first use.
@@ -84,6 +84,7 @@ pub fn info(_ctx: &Ctx) -> Result<(), AppError> {
             "lookup",
             "config",
             "api",
+            "mcp",
         ],
     )
     .with_profiles(&[pk_cli_utility::PROFILE, pk_cli_documents::PROFILE]);

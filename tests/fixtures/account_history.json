@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "debitCreditTransactionDate": "2026-06-20", "debitCreditAmount": -23.45, "debitCreditDescriptionCode": "PYMT" },
+    { "debitCreditTransactionDate": "2026-06-15", "debitCreditAmount": 12.34, "debitCreditDescriptionCode": "BILL" },
+    { "debitCreditTransactionDate": "2026-05-20", "debitCreditAmount": -34.56, "debitCreditDescriptionCode": "PYMT" }
+  ]
+}

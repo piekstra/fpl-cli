@@ -8,7 +8,7 @@ watch outages — from a terminal, with stable exit codes and text output a pers
 FPL publishes no official public API. This is a polite client over the same
 `www.fpl.com` JSON services that FPL's own website and mobile app call. It
 follows a small set of ergonomics: a fixed **verb** command surface,
-**keychain-only** runtime secrets with stdin/env ingress, **text-first** output,
+**keychain** runtime secrets with stdin/env ingress, **text-first** output,
 and a stable exit-code contract. Endpoint mapping is in
 [`docs/api.md`](docs/api.md).
 
@@ -194,6 +194,61 @@ fpl api POST /cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS
 Paths are relative to `https://www.fpl.com` (or pass a full URL). Output is
 always JSON.
 
+### Use with Claude
+
+`fpl mcp` serves four read-only tools to Claude over MCP: `fpl_balance`,
+`fpl_bills`, `fpl_payments` and `fpl_usage`. Nothing can make a payment or change
+your account. Payments come from FPL's 25 most recent ledger entries, the same
+window as `fpl payments list`.
+
+**Claude Code.** After `fpl auth login`:
+
+```sh
+claude mcp add fpl -- fpl mcp
+```
+
+Or install the `fpl-cli` plugin from
+[claude-plugins](https://github.com/piekstra/claude-plugins), which runs the same
+command.
+
+**Claude Desktop.** Download `fpl-<version>.mcpb` from the
+[latest release](https://github.com/piekstra/fpl-cli/releases/latest) and open it.
+It asks for your FPL username and password, keeps them in Claude Desktop's secure
+store, and passes them to the bundled `fpl` as `$FPL_USERNAME` and `$FPL_PASSWORD`.
+
+Any other MCP client that launches a local server can run `fpl mcp`.
+
+**Claude on the web and mobile.** claude.ai reaches tools through a remote
+connector, and your FPL password stays on your computer, so `fpl` serves the same
+tools from your computer to a connector you deploy into your own Cloudflare
+account:
+
+```console
+$ fpl mcp --new-token            # once: a bearer token, saved in the keychain and printed for the Worker
+$ fpl mcp --http --port 8732     # serve on 127.0.0.1 only
+```
+
+The connector, [cli-common's `connector/`](https://github.com/piekstra/cli-common/tree/main/connector#tools-from-your-computer-home-modules),
+reaches that port through a Cloudflare Tunnel in your account; its README walks
+through the tunnel, the VPC service, a launchd agent that keeps the server running,
+and the `HOME_FPL_TOKEN` secret, with the threat model. `--http` binds 127.0.0.1
+only, refuses to start without the token, refuses any request whose `Host` is not
+loopback or that carries an `Origin`, and serves the read-only tools only. The
+password never leaves your computer, but tool results do: your balance, bills,
+payments and usage pass through Cloudflare and reach Claude
+([`SECURITY.md`](SECURITY.md)). While the computer sleeps, the tools answer that it
+is offline.
+
+After `fpl self-update`, restart the server: a running one keeps the old code, and
+its launchd agent restarts it only when it exits. Its start line names the version.
+
+```console
+$ launchctl kickstart -k gui/$(id -u)/com.piekstra.fpl-mcp-http
+```
+
+`self-update` does not reach a Claude Desktop extension, which runs its own copy.
+Install the new release's `.mcpb` too.
+
 ### Updating
 
 ```sh
@@ -252,8 +307,10 @@ fpl api GET https://www.fplmaps.com/customer/outage/CountyOutages.json \
 |-----|---------|
 | `FPL_USERNAME` | Default login email |
 | `FPL_ACCOUNT` | Default account number |
+| `FPL_PASSWORD` | `fpl mcp` only: the password, read before the keychain |
+| `FPL_MCP_TOKEN` | `fpl mcp --http` only: the bearer token, read before the keychain |
 
-Secrets never enter through an env var the CLI reads at runtime — pass them to
+Every other command reads secrets only from the keychain — pass them to
 `init`/`set-credential` via `--password-from-env` / `--from-env` at setup time.
 
 ### Exit codes

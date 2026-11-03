@@ -140,6 +140,15 @@ pub enum Command {
 
     /// Machine-readable capability discovery (cli-info/v1).
     Info,
+
+    /// Serve read-only FPL tools to Claude over MCP (stdio, or --http).
+    ///
+    /// For Claude Code (`claude mcp add fpl -- fpl mcp`), Claude Desktop and
+    /// any MCP client. With --http, on 127.0.0.1 behind a bearer token, for
+    /// Claude on the web and mobile through your own Cloudflare Worker and
+    /// tunnel. The tools use the password `fpl auth login` stored, or
+    /// $FPL_PASSWORD, and never prompt or store anything themselves.
+    Mcp(pk_cli_mcp::McpArgs),
 }
 
 #[derive(Args, Debug)]
