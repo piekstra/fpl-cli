@@ -362,14 +362,59 @@ mod sign_in {
         let calls = Cell::new(0);
         let mut state = SignIn::default();
         let login = login_with(&calls, refuse);
-        assert!(state.read(stored("old"), &login, read_ok).is_err());
-        let again = state.read(stored("old"), &login, read_ok).unwrap_err();
+        assert!(state.read("user", stored("old"), &login, read_ok).is_err());
+        let again = state
+            .read("user", stored("old"), &login, read_ok)
+            .unwrap_err();
         assert_eq!(calls.get(), 1, "the refused password went out again");
         assert!(again.to_string().contains("not sent again"), "{again}");
 
         let login = login_with(&calls, |_| Ok("session"));
-        assert_eq!(state.read(stored("new"), &login, read_ok).unwrap(), 7);
+        assert_eq!(
+            state.read("user", stored("new"), &login, read_ok).unwrap(),
+            7
+        );
         assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn the_same_password_under_a_new_username_is_sent_once() {
+        let calls = Cell::new(0);
+        let mut state = SignIn::default();
+        let login = login_with(&calls, refuse);
+        assert!(state
+            .read("mistyped", stored("p"), &login, read_ok)
+            .is_err());
+        assert!(state
+            .read("mistyped", stored("p"), &login, read_ok)
+            .is_err());
+        assert_eq!(calls.get(), 1);
+
+        let login = login_with(&calls, |_| Ok("session"));
+        assert_eq!(
+            state.read("right", stored("p"), &login, read_ok).unwrap(),
+            7
+        );
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn a_changed_username_does_not_reuse_the_kept_session() {
+        let calls = Cell::new(0);
+        let mut state = SignIn::default();
+        let login = login_with(&calls, |_| Ok("session"));
+        state.read("first", stored("p"), &login, read_ok).unwrap();
+        state.read("first", stored("p"), &login, read_ok).unwrap();
+        assert_eq!(calls.get(), 1);
+        state.read("second", stored("p"), &login, read_ok).unwrap();
+        assert_eq!(calls.get(), 2);
+
+        // A switch that fails leaves no session of the old login behind.
+        let login = login_with(&calls, refuse);
+        assert!(state.read("third", stored("p"), &login, read_ok).is_err());
+        let login = login_with(&calls, |_| Ok("session"));
+        state.read("second", stored("p"), &login, read_ok).unwrap();
+        assert_eq!(calls.get(), 4);
     }
 
     #[test]
@@ -377,8 +422,8 @@ mod sign_in {
         let calls = Cell::new(0);
         let mut state = SignIn::default();
         let down = login_with(&calls, |_| Err(AppError::Upstream("HTTP 503".into())));
-        assert!(state.read(stored("same"), &down, read_ok).is_err());
-        assert!(state.read(stored("same"), &down, read_ok).is_err());
+        assert!(state.read("user", stored("same"), &down, read_ok).is_err());
+        assert!(state.read("user", stored("same"), &down, read_ok).is_err());
         assert_eq!(calls.get(), 2, "an outage must not stop the next try");
     }
 
@@ -387,8 +432,8 @@ mod sign_in {
         let calls = Cell::new(0);
         let mut state = SignIn::default();
         let login = login_with(&calls, |_| Ok("session"));
-        state.read(stored("p"), &login, read_ok).unwrap();
-        state.read(stored("p"), &login, read_ok).unwrap();
+        state.read("user", stored("p"), &login, read_ok).unwrap();
+        state.read("user", stored("p"), &login, read_ok).unwrap();
         assert_eq!(calls.get(), 1, "the session should have been kept");
 
         let reads = Cell::new(0);
@@ -400,7 +445,12 @@ mod sign_in {
                 Ok(7)
             }
         };
-        assert_eq!(state.read(stored("p"), &login, lapsed_once).unwrap(), 7);
+        assert_eq!(
+            state
+                .read("user", stored("p"), &login, lapsed_once)
+                .unwrap(),
+            7
+        );
         assert_eq!(calls.get(), 2);
         assert_eq!(reads.get(), 2);
     }
@@ -415,7 +465,9 @@ mod sign_in {
             reads.set(reads.get() + 1);
             Err(AppError::Auth("session expired".into()))
         };
-        assert!(state.read(stored("p"), &login, always_lapsed).is_err());
+        assert!(state
+            .read("user", stored("p"), &login, always_lapsed)
+            .is_err());
         assert_eq!(calls.get(), 2);
         assert_eq!(reads.get(), 2);
     }
@@ -482,6 +534,8 @@ fn an_empty_environment_password_is_an_error_not_a_keychain_read() {
     let keychain = StubKeychain::holding(Some("stored"));
     let err = resolve_password(&keychain, VAR, "user").err().unwrap();
     assert!(err.to_string().contains(VAR), "{err}");
+    // A credential problem, which no tool argument can fix.
+    assert!(matches!(err, AppError::Auth(_)), "{err:?}");
     assert_eq!(keychain.reads.get(), 0);
 }
 

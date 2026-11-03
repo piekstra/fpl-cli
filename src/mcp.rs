@@ -86,13 +86,14 @@ pub struct LivePortal {
     state: Mutex<SignIn<Fpl>>,
 }
 
-/// A kept session, and the password FPL last refused.
+/// A kept session, and the password FPL last refused, each with the username it
+/// went with: a running server sees the sign-in the user does next.
 struct SignIn<S> {
-    session: Option<S>,
+    session: Option<(String, S)>,
     /// Not sent again, so a server left running after a password change cannot
     /// lock the account by retrying it: the next call that finds a different
     /// password tries that. Only a refusal lands here; FPL being down does not.
-    refused: Option<Secret>,
+    refused: Option<(String, Secret)>,
 }
 
 impl<S> Default for SignIn<S> {
@@ -109,18 +110,24 @@ impl<S> SignIn<S> {
     /// more when FPL says the session has lapsed.
     fn read<T>(
         &mut self,
+        username: &str,
         password: impl Fn() -> Result<Secret, AppError>,
         login: impl Fn(&Secret) -> Result<S, AppError>,
         op: impl Fn(&S) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
-        if self.session.is_none() {
-            self.sign_in(&password, &login)?;
+        let current = |kept: &Option<(String, S)>| matches!(kept, Some((u, _)) if u == username);
+        if !current(&self.session) {
+            self.sign_in(username, &password, &login)?;
         }
-        match op(self.session.as_ref().expect("signed in above")) {
+        let session = |kept: &Option<(String, S)>| -> Result<T, AppError> {
+            let (_, session) = kept.as_ref().expect("signed in above");
+            op(session)
+        };
+        match session(&self.session) {
             Err(AppError::Auth(_)) => {
                 self.session = None;
-                self.sign_in(&password, &login)?;
-                op(self.session.as_ref().expect("signed in above"))
+                self.sign_in(username, &password, &login)?;
+                session(&self.session)
             }
             other => other,
         }
@@ -128,25 +135,28 @@ impl<S> SignIn<S> {
 
     fn sign_in(
         &mut self,
+        username: &str,
         password: &impl Fn() -> Result<Secret, AppError>,
         login: &impl Fn(&Secret) -> Result<S, AppError>,
     ) -> Result<(), AppError> {
         let password = password()?;
         let refused = self.refused.as_ref();
-        if refused.is_some_and(|r| r.expose() == password.expose()) {
+        if refused.is_some_and(|(u, r)| u == username && r.expose() == password.expose()) {
             return Err(AppError::Auth(
                 "FPL refused this password on an earlier call, so it was not sent again".into(),
             ));
         }
+        // A session for another username must not outlive a failed switch.
+        self.session = None;
         match login(&password) {
             Ok(session) => {
-                self.session = Some(session);
+                self.session = Some((username.to_string(), session));
                 self.refused = None;
                 Ok(())
             }
             Err(e) => {
                 if matches!(e, AppError::Auth(_)) {
-                    self.refused = Some(password);
+                    self.refused = Some((username.to_string(), password));
                 }
                 Err(e)
             }
@@ -169,6 +179,7 @@ impl LivePortal {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .read(
+                &username,
                 || resolve_password(&Keychain, PASSWORD_ENV, &username),
                 |password| Fpl::login(&username, password),
                 op,
@@ -241,7 +252,13 @@ fn resolve_password(
         .env(env)
         .remedy("`fpl auth login`");
     SecretResolver::new(keychain)
-        .resolve(&spec)?
+        .resolve(&spec)
+        // A variable set but empty is a usage error on a command line. Here no
+        // tool argument can fix it, and the model would be told to try another.
+        .map_err(|e| match e {
+            AppError::Usage(message) => AppError::Auth(message),
+            other => other,
+        })?
         .map(|resolved| resolved.secret)
         .ok_or_else(|| AppError::Auth(format!("no stored password for {username:?}")))
 }
