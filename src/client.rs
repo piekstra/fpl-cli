@@ -15,6 +15,7 @@
 
 use std::time::Duration;
 
+use pk_cli_core::transport::{require_secure_url, same_host_redirects, secure_redirects};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -48,7 +49,9 @@ pub struct AccountSummary {
     pub balance: Option<String>,
 }
 
-fn build_client() -> Result<reqwest::blocking::Client, AppError> {
+fn build_client(
+    redirects: reqwest::redirect::Policy,
+) -> Result<reqwest::blocking::Client, AppError> {
     reqwest::blocking::Client::builder()
         .user_agent(UA)
         // Total request budget, plus an explicit connect budget so a stalled
@@ -57,6 +60,7 @@ fn build_client() -> Result<reqwest::blocking::Client, AppError> {
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(15))
         .cookie_store(true)
+        .redirect(redirects)
         .build()
         .map_err(|e| AppError::Other(format!("failed to build HTTP client: {e}")))
 }
@@ -91,24 +95,33 @@ fn login_failure(status: u16) -> AppError {
     AppError::Upstream(format!("FPL login failed (HTTP {status})."))
 }
 
+/// The client a session uses. The session JWT is FPL's own header, which reqwest
+/// keeps on every hop, so a redirect to another host is refused.
+fn session_client() -> Result<reqwest::blocking::Client, AppError> {
+    build_client(same_host_redirects())
+}
+
 /// Turn a service path into a full URL. Accepts either an absolute URL or a
-/// leading-slash path relative to [`API_HOST`].
-fn url_for(path: &str) -> String {
+/// leading-slash path relative to [`API_HOST`]. An absolute URL is what `fpl api`
+/// passes through, and the session JWT goes with every request, so it must be
+/// `https`, or `http` only to this machine.
+fn url_for(path: &str) -> Result<String, AppError> {
     if path.starts_with("http://") || path.starts_with("https://") {
-        path.to_string()
+        require_secure_url(path)?;
+        Ok(path.to_string())
     } else if let Some(rest) = path.strip_prefix('/') {
-        format!("{API_HOST}/{rest}")
+        Ok(format!("{API_HOST}/{rest}"))
     } else {
-        format!("{API_HOST}/{path}")
+        Ok(format!("{API_HOST}/{path}"))
     }
 }
 
 impl Fpl {
     /// Authenticate with FPL and capture the session JWT + cookies.
     pub fn login(username: &str, password: &Secret) -> Result<Fpl, AppError> {
-        let client = build_client()?;
+        let client = session_client()?;
         let resp = client
-            .get(url_for(LOGIN_PATH))
+            .get(url_for(LOGIN_PATH)?)
             .basic_auth(username, Some(password.expose()))
             .header("Accept", "application/json")
             .send()?;
@@ -189,13 +202,13 @@ impl Fpl {
     }
 
     pub fn get(&self, path: &str) -> Result<Value, AppError> {
-        let resp = self.auth_headers(self.client.get(url_for(path))).send()?;
+        let resp = self.auth_headers(self.client.get(url_for(path)?)).send()?;
         self.handle(resp, path)
     }
 
     pub fn post(&self, path: &str, body: &Value) -> Result<Value, AppError> {
         let resp = self
-            .auth_headers(self.client.post(url_for(path)))
+            .auth_headers(self.client.post(url_for(path)?))
             .header("Content-Type", "application/json")
             .json(body)
             .send()?;
@@ -204,7 +217,7 @@ impl Fpl {
 
     pub fn put(&self, path: &str, body: &Value) -> Result<Value, AppError> {
         let resp = self
-            .auth_headers(self.client.put(url_for(path)))
+            .auth_headers(self.client.put(url_for(path)?))
             .header("Content-Type", "application/json")
             .json(body)
             .send()?;
@@ -225,7 +238,7 @@ impl Fpl {
             "PUT" => self.put(path, body.unwrap_or(&Value::Null)),
             "DELETE" => {
                 let resp = self
-                    .auth_headers(self.client.delete(url_for(path)))
+                    .auth_headers(self.client.delete(url_for(path)?))
                     .send()?;
                 self.handle(resp, path)
             }
@@ -578,7 +591,7 @@ impl Fpl {
     pub fn logout(&self) -> Result<(), AppError> {
         // Best-effort; ignore the body.
         let _ = self
-            .auth_headers(self.client.get(url_for(LOGOUT_PATH)))
+            .auth_headers(self.client.get(url_for(LOGOUT_PATH)?))
             .send();
         Ok(())
     }
@@ -586,8 +599,12 @@ impl Fpl {
 
 /// Fetch the public county outage feed (no auth required).
 pub fn county_outages() -> Result<Value, AppError> {
-    let client = build_client()?;
-    let resp = client.get(OUTAGE_COUNTY_URL).send()?;
+    county_outages_from(OUTAGE_COUNTY_URL)
+}
+
+fn county_outages_from(url: &str) -> Result<Value, AppError> {
+    let client = build_client(secure_redirects())?;
+    let resp = client.get(url).send()?;
     if !resp.status().is_success() {
         return Err(AppError::Upstream(format!(
             "outage feed HTTP {}",
@@ -602,6 +619,98 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A stub on 127.0.0.1. Answers each request with `respond(request)` as a raw
+    /// HTTP response, and keeps each request so a test can see what arrived.
+    fn stub(
+        respond: impl Fn(&str) -> String + Send + 'static,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let request = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    let complete = text.split_once("\r\n\r\n").is_some_and(|(head, body)| {
+                        let length = head
+                            .lines()
+                            .find_map(|l| {
+                                let (name, value) = l.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        body.len() >= length
+                    });
+                    if n == 0 || complete {
+                        break text;
+                    }
+                };
+                let response = respond(&request);
+                log.lock().unwrap().push(request);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (base, seen)
+    }
+
+    fn redirect_to(location: &str) -> String {
+        format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    }
+
+    fn ok_json(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn session() -> Fpl {
+        Fpl {
+            client: session_client().unwrap(),
+            jwt: "dummy-jwt".into(),
+        }
+    }
+
+    #[test]
+    fn a_redirect_to_another_host_is_refused_and_the_jwt_stays_here() {
+        let (other, reached) = stub(|_| ok_json("{}"));
+        let target = format!("{other}/next");
+        let (base, seen) = stub(move |_| redirect_to(&target));
+        let err = session().get(&format!("{base}/start")).unwrap_err();
+        assert!(err.to_string().contains("another host"), "{err}");
+        assert!(seen.lock().unwrap()[0].contains("dummy-jwt"));
+        assert!(reached.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_redirect_on_the_same_host_is_followed() {
+        let (base, seen) = stub(|request| {
+            if request.starts_with("GET /start") {
+                redirect_to("/next")
+            } else {
+                ok_json(r#"{"ok":true}"#)
+            }
+        });
+        let v = session().get(&format!("{base}/start")).unwrap();
+        assert_eq!(v, json!({"ok": true}));
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_outage_feed_refuses_a_redirect_that_leaves_https() {
+        let (base, _) = stub(|_| redirect_to("http://outages.example.invalid/feed"));
+        let err = county_outages_from(&format!("{base}/feed")).unwrap_err();
+        assert!(err.to_string().contains("leaves https"), "{err}");
+    }
+
     #[test]
     fn a_login_failure_other_than_401_is_upstream_not_auth() {
         for status in [403, 404, 429, 500, 503] {
@@ -614,9 +723,35 @@ mod tests {
 
     #[test]
     fn url_for_handles_paths_and_absolutes() {
-        assert_eq!(url_for("/cs/x"), "https://www.fpl.com/cs/x");
-        assert_eq!(url_for("cs/x"), "https://www.fpl.com/cs/x");
-        assert_eq!(url_for("https://other/y"), "https://other/y");
+        assert_eq!(url_for("/cs/x").unwrap(), "https://www.fpl.com/cs/x");
+        assert_eq!(url_for("cs/x").unwrap(), "https://www.fpl.com/cs/x");
+        assert_eq!(url_for("https://other/y").unwrap(), "https://other/y");
+        assert_eq!(
+            url_for("http://127.0.0.1:8080/y").unwrap(),
+            "http://127.0.0.1:8080/y"
+        );
+    }
+
+    /// The JWT goes with every request, so `fpl api GET http://…` must not send.
+    /// This host resolves nowhere, so only a refusal before the send gets exit 2.
+    #[test]
+    fn a_plain_http_url_is_refused_before_anything_is_sent() {
+        let session = Fpl {
+            client: build_client(same_host_redirects()).unwrap(),
+            jwt: "dummy-jwt".into(),
+        };
+        let url = "http://www.example.invalid/x?account=1234567890";
+        for result in [
+            session.get(url),
+            session.post(url, &Value::Null),
+            session.put(url, &Value::Null),
+            session.request("DELETE", url, None),
+        ] {
+            let err = result.unwrap_err();
+            assert_eq!(err.exit_code(), 2, "{err}");
+            assert!(err.to_string().contains("only https"), "{err}");
+            assert!(!err.to_string().contains("1234567890"), "{err}");
+        }
     }
 
     #[test]

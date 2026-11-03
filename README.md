@@ -191,8 +191,8 @@ fpl api GET /cs/customer/v1/resources/header
 fpl api POST /cs/customer/v1/accountservices/resources/loginNew?mediaChannel=IOS --data '{}'
 ```
 
-Paths are relative to `https://www.fpl.com` (or pass a full URL). Output is
-always JSON.
+Paths are relative to `https://www.fpl.com`, or pass a full `https://` URL
+(`http://` only to this machine). Output is always JSON.
 
 ### Use with Claude
 
