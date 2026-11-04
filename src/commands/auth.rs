@@ -1,6 +1,7 @@
 //! `fpl auth` — session and credential status.
 
 use pk_cli_auth::{AuthMethod, AuthStatus};
+use pk_cli_secrets::CredentialStore;
 
 use crate::cli::AuthCommand;
 use crate::commands::Ctx;
@@ -51,6 +52,8 @@ fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
     {
         removed = crate::commands::delete_credential(&u)?;
     }
+    let token =
+        forget.then(|| CredentialStore::for_binary("fpl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT));
     if forget {
         Config::clear()?;
     }
@@ -64,5 +67,47 @@ fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
             }
         );
     }
+    match token {
+        Some(token) => finish_forget(token, ctx.cli.quiet),
+        None => Ok(()),
+    }
+}
+
+/// The end of `auth logout --forget`. Nothing records whether `mcp --new-token` ran, so the delete
+/// is ungated: a removed token gets the note about a running server, and one that could not be
+/// removed is an error, since it still opens the connector.
+fn finish_forget(token: Result<bool, AppError>, quiet: bool) -> Result<(), AppError> {
+    let removed = token.map_err(|failure| {
+        AppError::Keychain(format!(
+            "the connector token of `fpl mcp --http` could not be removed, if there is one, and \
+             would still open the connector: {}. Run `fpl auth logout --forget` again.",
+            failure.message()
+        ))
+    })?;
+    if removed && !quiet {
+        eprintln!("{}", pk_cli_mcp::stop_note("fpl"));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::AppError;
+
+    #[test]
+    fn a_forget_that_could_not_remove_the_connector_token_says_so() {
+        let denied = AppError::Keychain("denied".into());
+        let says = super::finish_forget(Err(denied), true)
+            .unwrap_err()
+            .to_string();
+        assert!(says.contains("connector token"), "{says}");
+        assert!(says.contains("`fpl auth logout --forget`"), "{says}");
+        assert!(says.contains("denied"), "{says}");
+    }
+
+    #[test]
+    fn a_forget_with_a_token_or_without_one_finishes() {
+        assert!(super::finish_forget(Ok(true), true).is_ok());
+        assert!(super::finish_forget(Ok(false), false).is_ok());
+    }
 }

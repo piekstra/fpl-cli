@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.2 — 2026-11-03
+
+- `auth logout --forget` removes the connector token `mcp-http-token`, and says what that does
+  not end: a running `fpl mcp --http` keeps the token it started with.
+- The connector example moves to port 8740. `rhd` documents 8732, so the two could not run side
+  by side. Nobody has deployed; a port you already chose keeps working.
+- On Windows, a session too long for one credential is split and read back as one.
+- cli-common v0.27.0, up from v0.24.0.
+
 ## v0.5.1 — 2026-11-03
 
 - `fpl api` refuses a plain `http://` URL, except to this machine (exit 2). It sent the

@@ -225,7 +225,7 @@ account:
 
 ```console
 $ fpl mcp --new-token            # once: a bearer token, saved in the keychain and printed for the Worker
-$ fpl mcp --http --port 8732     # serve on 127.0.0.1 only
+$ fpl mcp --http --port 8740     # serve on 127.0.0.1 only
 ```
 
 The connector, [cli-common's `connector/`](https://github.com/piekstra/cli-common/tree/main/connector#tools-from-your-computer-home-modules),
