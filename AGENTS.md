@@ -82,7 +82,7 @@ unit tests on the pure helpers and verify manually with `fpl api`.
 
 This CLI conforms to **piekstra-cli/1** — the shared surface spec in
 [piekstra/cli-common](https://github.com/piekstra/cli-common) (`DESIGN.md`),
-pinned at **v0.27.0**: standard `auth` / `config` / `self-update` / `completions` / `info` commands,
+pinned at **v0.29.0**: standard `auth` / `config` / `self-update` / `completions` / `info` commands,
 global `--json`, canonical DTOs (`auth-status/v1`, `self-update/v1`,
 `cli-info/v1`), and frozen exit codes 0–6. It also declares the **utility/v1
 domain profile** (SPEC v1.1 §1.8, crate `pk-cli-utility`) via `fpl info`:

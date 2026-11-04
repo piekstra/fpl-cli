@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.3 — 2026-11-04
+
+- `auth logout --forget` speaks to a server on `$FPL_MCP_TOKEN` too, which never had a keychain item to remove.
+- cli-common v0.29.0, up from v0.27.0.
+
 ## v0.5.2 — 2026-11-03
 
 - `auth logout --forget` removes the connector token `mcp-http-token`, and says what that does
