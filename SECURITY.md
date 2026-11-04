@@ -37,6 +37,8 @@ core security concern:
   `fplmaps.com` outage feed) over TLS. The session JWT and cookies from login
   live in memory for the duration of a single command and are not saved.
 
+On Windows, whose Credential Manager holds 2,560 bytes per credential, a longer value is stored across several credentials with the suffix `.pk-split-` and read back whole. After a downgrade, run `fpl auth logout --forget --username <login>` from a current build: an older build's logout leaves the parts, and its `--forget` clears the name they are found by.
+
 ## The MCP server
 
 `fpl mcp` serves read-only tools to an MCP client (Claude Code, Claude Desktop) over
@@ -77,8 +79,9 @@ password or an FPL session.
 Worker, on their way to Claude. Who holds what, and what a leaked token can do, is in the connector's
 [threat model](https://github.com/piekstra/cli-common/blob/main/connector/README.md#threat-model).
 
-`fpl auth logout` removes the password and does not touch `mcp-http-token` or stop
-`fpl mcp --http`. To revoke the connector's access, run `fpl mcp --new-token
+`fpl auth logout` removes the password and does not touch `mcp-http-token` or stop `fpl
+mcp --http`. `fpl auth logout --forget` removes the token from the keychain too, and
+says so, but a running server keeps the token it started with. To revoke the connector's access, run `fpl mcp --new-token
 --overwrite` and restart the server (`launchctl kickstart -k gui/$(id -u)/com.piekstra.fpl-mcp-http`);
 the old token works until the restart. To stop serving, run `launchctl bootout
 gui/$(id -u)/com.piekstra.fpl-mcp-http` and stop the tunnel.
