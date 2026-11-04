@@ -37,7 +37,7 @@ core security concern:
   `fplmaps.com` outage feed) over TLS. The session JWT and cookies from login
   live in memory for the duration of a single command and are not saved.
 
-On Windows, whose Credential Manager holds 2,560 bytes per credential, a longer value is stored across several credentials with the suffix `.pk-split-` and read back whole. After a downgrade, run `fpl auth logout --forget` again from a current build: an older build's logout leaves the parts.
+On Windows, whose Credential Manager holds 2,560 bytes per credential, a longer value is stored across several credentials with the suffix `.pk-split-` and read back whole. After a downgrade, run `fpl auth logout --forget --username <login>` from a current build: an older build's logout leaves the parts, and its `--forget` clears the name they are found by.
 
 ## The MCP server
 

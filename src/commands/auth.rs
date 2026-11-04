@@ -43,51 +43,66 @@ fn logout(ctx: &Ctx, forget: bool) -> Result<(), AppError> {
         let _ = fpl.logout();
     }
 
-    let mut removed = false;
-    if let Some(u) = ctx
+    let removed_with_name = match ctx
         .cli
         .username
         .clone()
         .or_else(|| ctx.cfg.username.clone())
     {
-        removed = crate::commands::delete_credential(&u)?;
-    }
-    let token =
-        forget.then(|| CredentialStore::for_binary("fpl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT));
-    if forget {
-        Config::clear()?;
-    }
+        Some(u) => Some(crate::commands::delete_credential(&u)?),
+        None => None,
+    };
+    // A login can be gone while its pieces are not: an older build's `--forget` clears the name.
+    let named = removed_with_name.is_some();
+    let removed = removed_with_name.unwrap_or(false);
+    let outcome = forget.then(|| {
+        (
+            CredentialStore::for_binary("fpl").delete(pk_cli_mcp::HTTP_TOKEN_ACCOUNT),
+            Config::clear(),
+        )
+    });
     if !ctx.cli.quiet {
         eprintln!(
             "logged out{}",
             if removed {
                 " and cleared stored password"
-            } else {
+            } else if named {
                 ""
+            } else {
+                "; no username is known, so no stored password was looked for (--username names one)"
             }
         );
     }
-    match token {
-        Some(token) => finish_forget(token, ctx.cli.quiet),
+    match outcome {
+        Some((token, config)) => finish_forget(token, config, ctx.cli.quiet),
         None => Ok(()),
     }
 }
 
-/// The end of `auth logout --forget`. Nothing records whether `mcp --new-token` ran, so the delete
-/// is ungated: a removed token gets the note about a running server, and one that could not be
-/// removed is an error, since it still opens the connector.
-fn finish_forget(token: Result<bool, AppError>, quiet: bool) -> Result<(), AppError> {
-    let removed = token.map_err(|failure| {
-        AppError::Keychain(format!(
-            "the connector token of `fpl mcp --http` could not be removed, if there is one, and \
-             would still open the connector: {}. Run `fpl auth logout --forget` again.",
-            failure.message()
-        ))
-    })?;
-    if removed && !quiet {
+/// The end of `auth logout --forget`. Nothing records whether `mcp --new-token` ran, so the token's
+/// delete is ungated, and it and the config's are both attempted and both reported here: neither
+/// failure hides the other, or the note that a removed token still needs.
+fn finish_forget(
+    token: Result<bool, AppError>,
+    config: Result<bool, AppError>,
+    quiet: bool,
+) -> Result<(), AppError> {
+    if matches!(token, Ok(true)) && !quiet {
         eprintln!("{}", pk_cli_mcp::stop_note("fpl"));
     }
-    Ok(())
+    match (token, config) {
+        (Err(failure), config) => Err(AppError::Keychain(format!(
+            "logged out, but the connector token of `fpl mcp --http` could not be removed ({}) and would \
+             still open the connector{}; run `fpl auth logout --forget` again",
+            failure.message(),
+            config
+                .err()
+                .map(|e| format!(", and the config was not cleared ({})", e.message()))
+                .unwrap_or_default(),
+        ))),
+        (Ok(_), Err(e)) => Err(e),
+        (Ok(_), Ok(_)) => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -96,18 +111,37 @@ mod tests {
 
     #[test]
     fn a_forget_that_could_not_remove_the_connector_token_says_so() {
-        let denied = AppError::Keychain("denied".into());
-        let says = super::finish_forget(Err(denied), true)
+        let denied = || AppError::Keychain("denied".into());
+        let says = super::finish_forget(Err(denied()), Ok(true), true)
             .unwrap_err()
             .to_string();
         assert!(says.contains("connector token"), "{says}");
         assert!(says.contains("`fpl auth logout --forget`"), "{says}");
         assert!(says.contains("denied"), "{says}");
+        assert!(!says.contains("config"), "{says}");
+    }
+
+    #[test]
+    fn neither_failure_of_a_forget_hides_the_other() {
+        let says = super::finish_forget(
+            Err(AppError::Keychain("denied".into())),
+            Err(AppError::Other("read-only".into())),
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            says.contains("denied") && says.contains("read-only"),
+            "{says}"
+        );
+        let e = super::finish_forget(Ok(true), Err(AppError::Other("read-only".into())), true)
+            .unwrap_err();
+        assert!(e.to_string().contains("read-only"), "{e}");
     }
 
     #[test]
     fn a_forget_with_a_token_or_without_one_finishes() {
-        assert!(super::finish_forget(Ok(true), true).is_ok());
-        assert!(super::finish_forget(Ok(false), false).is_ok());
+        assert!(super::finish_forget(Ok(true), Ok(true), true).is_ok());
+        assert!(super::finish_forget(Ok(false), Ok(false), false).is_ok());
     }
 }
