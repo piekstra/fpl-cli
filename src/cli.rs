@@ -203,7 +203,8 @@ pub enum AuthCommand {
     },
     /// End the FPL session and remove the stored password.
     Logout {
-        /// Also clear the saved username/account from config.
+        /// Also clear the saved username/account from config and remove the `mcp --http` connector
+        /// token. A running server keeps the token it started with.
         #[arg(long)]
         forget: bool,
     },
