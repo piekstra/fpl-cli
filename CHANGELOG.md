@@ -3,7 +3,8 @@
 ## v0.5.2 — 2026-11-03
 
 - `auth logout --forget` removes the connector token `mcp-http-token`, and says what that does
-  not end: a running `fpl mcp --http` keeps the token it started with.
+  not end: a running `fpl mcp --http` keeps the token it started with. Every step of a forget is
+  attempted, and every failure reported.
 - The connector example moves to port 8740. `rhd` documents 8732, so the two could not run side
   by side. Nobody has deployed; a port you already chose keeps working.
 - On Windows, a session too long for one credential is split and read back as one.
