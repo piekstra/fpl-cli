@@ -16,9 +16,9 @@ name: release
 #
 # The versions are checked before anything is built: the tag, Cargo.toml
 # and the .mcpb manifest must agree, or nothing is built or published.
-# `publish` attaches whatever was built even when one OS failed, then fails
-# the run if any expected asset is missing, so a partial release is never
-# a green one.
+# `publish` attaches whatever was built to a draft, even when one OS failed, and
+# publishes it only once every expected asset is there. A missing one fails the
+# run and leaves the draft, and `self-update` keeps finding the last whole release.
 #
 # A pull request that changes how releases are built, or the dependencies
 # and version (Cargo.toml, Cargo.lock), runs every job but `publish` as a
@@ -178,12 +178,12 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Attaches whatever was built, even when one OS failed, so a dead macOS
-  # queue still leaves the Linux and Windows tarballs on the release; then
-  # fails if anything expected is missing. Never runs when the versions
-  # disagree.
+  # Attaches whatever was built to a draft, even when one OS failed, so a dead
+  # macOS queue still leaves the Linux and Windows tarballs there. Publishes the
+  # draft only when nothing expected is missing, and otherwise fails. Never runs
+  # when the versions disagree.
   publish:
-    name: attach to the release
+    name: publish the release
     needs: [versions, build, mcpb]
     if: ${{ !cancelled() && needs.versions.result == 'success' && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
@@ -196,8 +196,9 @@ jobs:
           path: dist
           merge-multiple: true
       - run: ls -l dist
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          draft: true
           files: |
             dist/fpl-*.tar.gz
             dist/fpl-*.tar.gz.sha256
@@ -218,3 +219,7 @@ jobs:
             [ -f "dist/$f" ] || { echo "::error::missing $f"; missing=1; }
           done
           exit "$missing"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
