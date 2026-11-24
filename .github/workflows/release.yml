@@ -51,7 +51,7 @@ jobs:
     name: check versions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Tag, Cargo.toml and manifest agree
@@ -89,10 +89,10 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - name: Install Linux build deps
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
@@ -122,13 +122,13 @@ jobs:
           lipo -create -output bin/universal-apple-darwin/fpl \
             bin/aarch64-apple-darwin/fpl bin/x86_64-apple-darwin/fpl
           lipo -info bin/universal-apple-darwin/fpl
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bin-${{ runner.os }}
           path: bin/
           retention-days: 3
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist-${{ runner.os }}
           path: |
@@ -142,17 +142,20 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: bin-*
           path: bin
           merge-multiple: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
+          # Nothing is installed from a lockfile; a cache could only be
+          # poisoned.
+          package-manager-cache: false
       # The `versions` job has already held the manifest to Cargo.toml and
       # the tag.
       - name: Assemble, validate and pack
@@ -161,7 +164,7 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           stage="$RUNNER_TEMP/fpl"
           mkdir -p "$stage/server/linux"
-          cp packaging/mcpb/manifest.json LICENSE-MIT LICENSE-APACHE "$stage/"
+          cp packaging/mcpb/manifest.json LICENSE "$stage/"
           cp bin/universal-apple-darwin/fpl "$stage/server/fpl"
           cp bin/x86_64-pc-windows-msvc/fpl.exe "$stage/server/fpl.exe"
           cp bin/x86_64-unknown-linux-gnu/fpl "$stage/server/linux/fpl"
@@ -171,7 +174,7 @@ jobs:
           npx -y @anthropic-ai/mcpb@2.1.2 pack "$stage" "fpl-$version.mcpb"
           sha256sum "fpl-$version.mcpb" > "fpl-$version.mcpb.sha256"
           unzip -Z "fpl-$version.mcpb"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist-mcpb
           path: fpl-*.mcpb*
@@ -190,7 +193,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: dist-*
           path: dist

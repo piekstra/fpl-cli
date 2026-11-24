@@ -3,8 +3,10 @@
 yanked = "deny"
 
 [licenses]
-# Permissive licenses we accept for dependencies.
+# Licenses we accept: permissive ones for dependencies, and AGPL-3.0-only,
+# fpl's own license.
 allow = [
+    "AGPL-3.0-only",
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
