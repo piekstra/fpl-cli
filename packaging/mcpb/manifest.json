@@ -16,7 +16,7 @@
   "homepage": "https://github.com/piekstra/fpl-cli",
   "documentation": "https://github.com/piekstra/fpl-cli#use-with-claude",
   "support": "https://github.com/piekstra/fpl-cli/issues",
-  "license": "MIT OR Apache-2.0",
+  "license": "AGPL-3.0-only",
   "keywords": [
     "fpl",
     "florida power and light",

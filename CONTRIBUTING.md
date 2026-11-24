@@ -48,7 +48,7 @@ Use the PR template and fill in the checklist. A maintainer (see
 
 ## License of contributions
 
-By contributing, you agree your work is dual-licensed under **MIT OR Apache-2.0**.
+By contributing, you agree your work is licensed under **AGPL-3.0-only**.
 
 ## The CLI family & cli-common
 

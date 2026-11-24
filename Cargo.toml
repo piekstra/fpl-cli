@@ -5,7 +5,7 @@ edition = "2021"
 # pk-cli-auth needs 1.89.
 rust-version = "1.89"
 description = "Manage your Florida Power & Light account from the command line — Keychain-secured, agent-friendly. Work in progress."
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 repository = "https://github.com/piekstra/fpl-cli"
 homepage = "https://github.com/piekstra/fpl-cli"
 readme = "README.md"
